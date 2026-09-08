@@ -1,0 +1,14 @@
+{
+  "name": "pathsayer",
+  "version": "1.0.20260908.3",
+  "description": "Pathsayer — automatic context and group memory for coding agents. Recalls the reasoning and decisions behind existing work, checks commits against it, and keeps you, your teammates and their AIs on a shared path forward.",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Pathsayer",
+    "shortDescription": "Recall the reasoning behind existing code; check commits against it.",
+    "category": "Developer Tools",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png"
+  }
+}

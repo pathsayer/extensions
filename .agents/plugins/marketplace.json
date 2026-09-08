@@ -1,0 +1,20 @@
+{
+  "name": "pathsayer",
+  "interface": {
+    "displayName": "Pathsayer"
+  },
+  "plugins": [
+    {
+      "name": "pathsayer",
+      "source": {
+        "source": "local",
+        "path": "./plugins/pathsayer"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

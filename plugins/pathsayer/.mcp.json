@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "pathsayer": {
+      "type": "http",
+      "url": "https://pathsayer.com/mcp"
+    }
+  }
+}
