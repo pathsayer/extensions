@@ -3,33 +3,38 @@
 Pathsayer's public distribution — one place for everything we ship for AI coding
 agents. This repo is **both**:
 
-- **`plugins/`** — a Claude Code plugin marketplace. Add it, install the plugin,
-  and you get the skill **and** the Pathsayer MCP server wired up in one step.
+- **`plugins/`** — a plugin marketplace for Claude Code and Codex — one artifact,
+  both harnesses. Add it, install the plugin, and you get the skills **and** the
+  Pathsayer MCP server wired up in one step.
 - **`skills/`** — the same skills as raw, portable `SKILL.md` files (the open
   Agent-Skills format), for any tool or for reading directly.
 
 ## Claude Code
 
 ```
-/plugin marketplace add https://pathsayer.com/plugin/marketplace.json
+/plugin marketplace add pathsayer/extensions
 /plugin install pathsayer@pathsayer
 ```
 
 This installs the skills (`/pathsayer:recon`, `/pathsayer:session-setup`) and
 connects the Pathsayer MCP server. On first use, run `/mcp` to authenticate.
-(`/plugin marketplace add pathsayer/extensions` — this repo — works too; the
-URL is the primary channel.)
+Turn on auto-update for the `pathsayer` marketplace in `/plugin` so releases
+arrive on their own; otherwise `/plugin update pathsayer@pathsayer`.
+
+(Installed before 2026-09-08 from `https://pathsayer.com/plugin/marketplace.json`?
+That channel is retired: `/plugin marketplace remove pathsayer`, then the two
+lines above.)
 
 ### Claude Code on the web (claude.ai/code)
 
 Cloud sessions run on a fresh VM, so the plugin is installed by the
 environment, once, in its settings:
 
-1. Network access → **Custom**, and add `pathsayer.com` and `*.pathsayer.com`
-   (the default allowlist covers package registries only).
+1. Network access → **Custom**, and add `pathsayer.com`, `*.pathsayer.com` and
+   `github.com` (the default allowlist covers package registries only).
 2. Setup script:
    ```
-   claude plugin marketplace add https://pathsayer.com/plugin/marketplace.json
+   claude plugin marketplace add pathsayer/extensions
    claude plugin install pathsayer@pathsayer
    claude plugin update pathsayer@pathsayer
    ```
@@ -42,8 +47,7 @@ machine today.)
 
 ## Codex
 
-Codex reads local and git marketplaces, never URL ones (a plain URL is treated as
-a git remote) — so this repo is its channel. Codex 0.126 or newer.
+The same repo, the same plugin. Codex 0.126 or newer.
 
 ```
 codex plugin marketplace add pathsayer/extensions

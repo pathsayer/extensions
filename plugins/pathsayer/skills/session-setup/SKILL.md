@@ -36,19 +36,19 @@ surface you use. Nothing is added to any repo; the install is yours alone.
 and its hooks arm every session after that:
 
 ```
-claude plugin marketplace add https://pathsayer.com/plugin/marketplace.json
+claude plugin marketplace add pathsayer/extensions
 claude plugin install pathsayer@pathsayer
 ```
 
 **Claude Code on the web (claude.ai/code)** — in the cloud environment's
 settings, once:
 
-1. Network access → **Custom**, and add `pathsayer.com` and `*.pathsayer.com`.
-   The default allowlist covers package registries only; without this the
-   plugin cannot reach Pathsayer and every hook fails open.
+1. Network access → **Custom**, and add `pathsayer.com`, `*.pathsayer.com` and
+   `github.com`. The default allowlist covers package registries only; without
+   this the plugin cannot be fetched or reach Pathsayer, and every hook fails open.
 2. Setup script → these three lines:
    ```
-   claude plugin marketplace add https://pathsayer.com/plugin/marketplace.json
+   claude plugin marketplace add pathsayer/extensions
    claude plugin install pathsayer@pathsayer
    claude plugin update pathsayer@pathsayer
    ```
@@ -61,8 +61,9 @@ Every session there then installs and arms on its own.
 **claude.ai chat and Cowork** — connector only; there is no plugin surface
 there. MCP ops work; no hooks run.
 
-**Codex** — the plugin is delivered as a git marketplace
-(`codex plugin marketplace add pathsayer/extensions`). Hooks and skills run.
+**Codex** — the same marketplace (`codex plugin marketplace add pathsayer/extensions`,
+then `codex plugin add pathsayer@pathsayer`; trust the hooks once in `/hooks`). Hooks and
+skills run.
 
 There is **no environment variable and no secret to paste** — the connector is
 the credential. Connect Pathsayer once on claude.ai and it is live in claude.ai
