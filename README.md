@@ -19,7 +19,10 @@ agents. This repo is **both**:
 This installs the skills (`/pathsayer:recon`, `/pathsayer:session-setup`) and
 connects the Pathsayer MCP server. On first use, run `/mcp` to authenticate.
 Turn on auto-update for the `pathsayer` marketplace in `/plugin` so releases
-arrive on their own; otherwise `/plugin update pathsayer@pathsayer`.
+arrive on their own; otherwise `/plugin update pathsayer@pathsayer`. From
+1.0.20260908.12 an update takes effect in the running session on its next hook
+fire — the hooks run the newest installed version, no restart. A release that
+adds a hook event, and a rewritten skill, still load at the next session start.
 
 (Installed before 2026-09-08 from `https://pathsayer.com/plugin/marketplace.json`?
 That channel is retired: `/plugin marketplace remove pathsayer`, then the two
