@@ -1,5 +1,5 @@
 {
   "name": "pathsayer",
-  "version": "1.0.20260908.11",
+  "version": "1.0.20260908.12",
   "description": "Pathsayer — automatic context and group memory for coding agents. Recalls the reasoning and decisions behind existing work, checks commits against it, and keeps you, your teammates and their AIs on a shared path forward."
 }
