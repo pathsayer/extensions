@@ -26,29 +26,30 @@ function findServeText(o) {
   return null;
 }
 
-/** Walk marker → the deep-recon line (2026-08-29; the 'Deep recon' label since 2026-09-08). The walk= token carries the
+/** Walk marker → the deep-recon line (2026-08-29; labelled 'Recon (deep)' since 2026-09-09 — Gary:
+ *  the bar paints EVERY walk, whichever door seeded it, so a question-shaped deep recon under
+ *  the skill's Deep effort shows the same way a commit's does; until then only a diff-shaped walk
+ *  painted and a prompt-triggered walk left the quick line standing). The walk= token carries the
  *  graph's deterministic shape — counts of candidates to read, NEVER verdicts (the same
- *  rule the old chk marker obeyed). Only a diff-shaped walk paints (a commit's walk;
- *  its marker carries ng/x); other walks stay unpainted. Reads like:
- *  `Deep recon · walked 27 writes, 5 replaced · found 2 overlaps, 2 absences · 31% new ground`
- *  A capped walk appends `large history, N% visited`; unmatchable appends when nonzero;
- *  a priorless commit reads `Deep recon · 100% new ground`. (120 S1f: `ab` counts the
+ *  rule the old chk marker obeyed). Reads like:
+ *  `Recon (deep) · walked 27 writes, 5 replaced · found 2 overlaps, 2 absences · 31% new ground`
+ *  New ground and unmatchable are diff-door facts and appear only when nonzero; a capped walk
+ *  appends `large history, N% visited`; a priorless commit reads `Recon (deep) · 100% new ground`;
+ *  a walk that resolved nothing reads `Recon (deep) · walked 0 writes`. (120 S1f: `ab` counts the
  *  absence check; historical `dc` markers still render their decisions segment — the
  *  transcript's past is not rewritten.) */
+const WALK_LABEL = 'Recon (deep)';
 export function walkCounts(text) {
   const m = /pathsayer-recon\/\d+ rcn=rcn_[0-9a-f]{16}[^>]*? walk=([a-z0-9:,]+)/.exec(text);
   if (!m) return null;
   const kv = Object.fromEntries(m[1].split(',').map((p) => p.split(':')));
-  // a diff-shaped walk (a commit's) carries ng/x; their presence is the discriminator —
-  // other walks stay unpainted (2026-08-29: no separate flag, no internal vocabulary)
-  if (!('ng' in kv)) return null;
   const num = (k) => Number(kv[k] ?? 0);
   const [n, rp, ov, dc, ab, ng, x] = [num('n'), num('rp'), num('ov'), num('dc'), num('ab'), num('ng'), num('x')];
   if (n === 0) {
     const parts = [];
     if (ng > 0) parts.push(`${ng}% new ground`);
     if (x > 0) parts.push(`${x} unmatchable`);
-    return parts.length > 0 ? `Deep recon · ${parts.join(' · ')}` : null;
+    return `${WALK_LABEL} · ${parts.length > 0 ? parts.join(' · ') : 'walked 0 writes'}`;
   }
   const segs = [`walked ${n} write${n === 1 ? '' : 's'}${rp > 0 ? `, ${rp} replaced` : ''}`];
   const found = [];
@@ -59,7 +60,7 @@ export function walkCounts(text) {
   if (ng > 0) segs.push(`${ng}% new ground`);
   if (x > 0) segs.push(`${x} unmatchable`);
   if (kv.t === '1') segs.push(`large history, ${num('mk')}% visited`);
-  return `Deep recon · ${segs.join(' · ')}`;
+  return `${WALK_LABEL} · ${segs.join(' · ')}`;
 }
 
 
