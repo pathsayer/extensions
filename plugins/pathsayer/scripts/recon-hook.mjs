@@ -51,7 +51,7 @@ import { readFileSync, writeFileSync } from 'node:fs'; // the root-commit cache 
 import { join } from 'node:path';
 
 import { resolveOrigin, getBearer, dropBearer, readEpoch, bumpEpoch, detectHarness } from './lib/hookauth.mjs';
-import { DIRECTIVE, isGitCommit } from './commit.mjs';
+import { DIRECTIVE, commitDirOf, isGitCommit } from './commit.mjs';
 
 /** The plugin's baked origin (build-generated); source-tree runs (the rig) fall back to
  *  prod, which the rig's PATHSAYER_ORIGIN pin overrides anyway. */
@@ -245,7 +245,11 @@ export function rootOf(cwd) {
 export function buildCommitFire(p) {
   const t = p.tool_input ?? {};
   if (!isGitCommit(t.command)) return null;
-  const cwd = typeof p.cwd === 'string' && p.cwd ? p.cwd : process.cwd();
+  // the repository the COMMAND named (a `cd`, a `-C`), never assumed to be the hook's cwd — in a
+  // shared checkout with worktrees that is another tab's repository (2026-09-08); an unresolvable
+  // target is the directive, not a guess
+  const cwd = commitDirOf(t.command, typeof p.cwd === 'string' && p.cwd ? p.cwd : process.cwd());
+  if (cwd === null) return { fallback: true };
   let sha, committedAt;
   try {
     const [h, ct] = git(cwd, ['log', '-1', '--format=%H %ct']).trim().split(' ');
@@ -339,7 +343,9 @@ async function main() {
     const text = body.hookSpecificOutput.additionalContext;
     try {
       if (typeof text === 'string' && text.length > 0) statusLib?.writeServe(sessionId, text, { surface: fire.surface, op: commit ? 'walk' : 'serve' }, sidecar);
-      else if (lane === 'prompt') statusLib?.writeSilent(sessionId, { surface: 'UserPromptSubmit' });
+      // A REFUSED fire says why: the server's silent sidecar carries the reason (no_space — the
+      // caller is in no space at all) and the bar reads "no space" rather than "silent".
+      else if (lane === 'prompt') statusLib?.writeSilent(sessionId, { surface: 'UserPromptSubmit', ...(typeof sidecar?.silent === 'string' ? { status: sidecar.silent } : {}) });
     } catch { /* presence is best-effort */ }
   }
   process.stdout.write(JSON.stringify(body)); // the envelope, verbatim — the parity contract

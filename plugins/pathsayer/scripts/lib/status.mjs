@@ -229,20 +229,25 @@ export function reconBody({ names = [], files = [] }) {
 /** Plain-language rendering of a ServeStatus. Unknown/absent → the bare word, so
  *  a new status added server-side degrades to today's line instead of leaking an
  *  identifier at the user. 'served' never reaches here (writeServe owns it). */
+// A word ONLY for a fault (ruled 2026-09-08): a designed silence — a prompt with nothing to ask,
+// nothing above the bar, an empty corpus — paints the bare word. What a person could act on or
+// report gets a plain phrase; the ledger keeps the exact stage either way.
 const SILENT_WORDS = {
-  gave_up: 'gave up waiting',
-  refused: 'service error',
-  unreachable: 'service down',
-  contract_mismatch: 'version mismatch',
-  model_mismatch: 'model mismatch',
-  empty_corpus: 'nothing to rank',
-  render_empty: 'nothing rendered',
-  internal_error: 'error',
+  gave_up: 'timed out',                 // our own timeout fired waiting on the ranker
+  unreachable: 'service down',          // nothing answered
+  refused: 'error',                     // the service answered and the answer was unusable
+  internal_error: 'error',              // our side broke before a verdict
+  render_empty: 'error',                // scored fine, rendered nothing — a defect, not silence
+  contract_mismatch: 'update plugin',   // plugin and server disagree on a version
+  model_mismatch: 'update plugin',
+  image_mismatch: 'update plugin',
+  // The caller is in no space at all — the one fire the server refuses outright. Open the app.
+  no_space: 'no Pathsayer shared space found',
 };
 
 /** The op ran and served nothing — shown dimmed (ratified: experience it). When the server
  *  said WHY (Gary 2026-08-07), the reason replaces the bare word: a cold fire reads as
- *  "gave up waiting", not as an unexplained blank the reader has to diagnose. */
+ *  "timed out", not as an unexplained blank the reader has to diagnose. */
 export function writeSilent(sessionId, meta = {}) {
   const word = SILENT_WORDS[meta.status] ?? 'silent';
   writeStatus(sessionId, `${PREFIX}${SEP}${DIM}${word}${UNDIM}`, { op: 'recon', kind: 'silent', ...meta });

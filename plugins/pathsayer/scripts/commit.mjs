@@ -16,6 +16,7 @@
 // Renamed 2026-09-08: the old name was a synonym for recon and a clash with a competitor's git-hook
 // product. There is one skill (recon) and this is its recipe run on the commit — "deep recon on a
 // commit".
+import { resolve } from 'node:path';
 
 /** True if `cmd` runs `git commit` as a real subcommand (not --help), in any &&/;/| segment. Skips
  *  git's global flags (`-C <path>`, `-c k=v`) before reading the subcommand. */
@@ -33,6 +34,53 @@ export function isGitCommit(cmd) {
   return false;
 }
 
+/** A literal shell word: quotes stripped; null when the shell would expand it (a variable, a
+ *  substitution, a glob, `~`) or it is empty — the adapter never guesses what the shell did. */
+function literalWord(w) {
+  if (typeof w !== 'string' || w === '') return null;
+  if (/[$`*?~]/.test(w)) return null;
+  const m = /^'([^']*)'$/.exec(w) ?? /^"([^"]*)"$/.exec(w);
+  return m ? m[1] : w;
+}
+
+/** The directory the command's `git commit` ran in, resolved from the COMMAND (2026-09-08, another
+ *  thread's review of 143): a preceding `cd <dir>` (chains compose), the matching segment's `-C
+ *  <dir>` (several compose, as git composes them; relative to the cd'd directory), a subshell's
+ *  parens. `cwd` is where the shell started. Null when there is no commit or a target cannot be
+ *  resolved (a variable, a substitution, `cd -`) — the caller falls back to the directive rather
+ *  than read HEAD in a directory the command never named: in a shared checkout with worktrees the
+ *  hook's cwd is another tab's repository, and its fresh commit would walk as this session's. */
+export function commitDirOf(cmd, cwd) {
+  if (!isGitCommit(cmd) || typeof cwd !== 'string' || !cwd) return null;
+  let dir = cwd;
+  for (const seg of cmd.split(/&&|\|\||;|\n/)) {
+    const s = seg.trim().replace(/^\(+\s*/, '').replace(/\s*\)+$/, '');
+    // a quoted word is one token: split on whitespace outside quotes
+    const toks = s.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
+    if (toks[0] === 'cd' || toks[0] === 'pushd') {
+      const target = toks[1];
+      if (target === undefined) return null; // `cd` alone is $HOME — not resolved here
+      const lit = literalWord(target);
+      if (lit === null || lit === '-') return null;
+      dir = resolve(dir, lit);
+      continue;
+    }
+    if (toks[0] !== 'git') continue;
+    let i = 1;
+    let at = dir;
+    while (i < toks.length && toks[i].startsWith('-')) {
+      if (toks[i] === '-C') {
+        const lit = literalWord(toks[i + 1]);
+        if (lit === null) return null;
+        at = resolve(at, lit);
+        i += 2;
+      } else i += toks[i] === '-c' ? 2 : 1;
+    }
+    if (toks[i] === 'commit' && !s.includes('--help') && !/ -h(\s|$)/.test(s)) return at;
+  }
+  return null;
+}
+
 // 2026-08-29 — the directive names recon_walk with the diff (the
 // pre-walk op is retired; the skill holds the checks). Timing stays honest: the walk runs WITH
 // the commit (a finding means amend the message or fix in a follow-up), never ahead of it — since
@@ -47,8 +95,9 @@ export const DIRECTIVE =
   'Pathsayer `recon_walk` op with it ({ diff: "<the diff, verbatim>" }). The response is the header ' +
   '(`walked … · rcn_…`) and the `checks` lists; the graph itself is kept under that rcn_ — read it ' +
   'with `recon_walk_query` ({ rcn, verb }: now <id> · node <id> · candidates <a> <b> · grep · top · ' +
-  'origins · arc). Run the three checks: replaced (does the change undo recorded reasoning without ' +
-  'the message saying so? a mostly-replaced attribution\'s current form is `verb: "now"`), overlaps ' +
+  'origins · arc). Run the three checks: replaced (`node` the ids above the mass floor, ten at most in ' +
+  'one call — does the change undo recorded reasoning without the message saying so? a mostly-replaced ' +
+  'attribution\'s current form is `verb: "now"`), overlaps ' +
   '(does the diff pick a side of an unsettled pair? a pair beyond the served list is `verb: ' +
   '"candidates"`), and absences (files that usually change with these did not — make the edit or ' +
   'name in one clause why not). Raise a conflict to the user with the receipt (the attribution\'s ' +

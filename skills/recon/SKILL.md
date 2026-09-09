@@ -29,9 +29,14 @@ and, when the matched work has been materially revised, a `[now]` block: the
 work's CURRENT form (its causal head), with the head's own date, author,
 `atr_…` id, address, owning path, and intent synthesis. On prompts it also
 lists up to three **additional paths** the question bears on. The calls below
-are how you go deeper than what a hook served. Recon has two depths: `recon` /
-`recon_get` for a question or a span of code, and Recon Walk ("deep recon")
-when you are about to change code and want the whole history around it.
+are how you go deeper than what a hook served. Recon runs at two efforts.
+**Quick** is one serve: the two attributions above, with their since and now —
+what every hook injects, and what `recon` / `recon_get` return when you call
+them. **Deep** is Recon Walk and the recipe below: a kept graph of the history
+around what you hold, its checks read, its questions asked, its findings cited.
+Hooks run quick because they must be fast; the one exception is the commit hook,
+which runs deep because a diff is an unambiguous ask. A prompt that asks for
+recon — "recon X", "deep recon X", "what did we decide about X" — means deep.
 
 ## Search, then open
 
@@ -251,8 +256,9 @@ current name and the header says so (`seeded 15 holders of old.ts → new.ts (re
 `base`+`head` — the commit's own diff, as the record saw it: the attributions whose
 lines that commit removed, hunk by hunk. It works once the record has synced and
 measured the commit; until then the response says `not in the repo lane yet` or
-`walked, not yet swept — pass the diff`. For the commit you just made, pass `diff`;
-for anything older, `commit` is enough. **Deep recon on a commit** is this same
+`walked, not yet swept — pass the diff`. For the commit you just made, pass `diff` —
+a commit minutes old is never in the record yet; `commit` is for one the record has
+synced (hours, on a connected repo). **Deep recon on a commit** is this same
 recipe with the diff as the ask — the plugin runs it for you after every `git commit`
 (the walk lands in your turn; do not walk it again), and when it cannot, it tells you
 to gather the diff (`git show HEAD -U3`) and walk it yourself.
@@ -279,7 +285,12 @@ walked 0s ago · rcn_… · 28 nodes · 68 edges · 2 components · 2 overlaps �
   sides), `absences` (diff and commit walks: files that historically change with
   the ones you touched and did not this time — `{file, absent, together, of,
   lastTogether}`, at most 3).
-- **`misses`** — everything you asked for that resolved to nothing, named.
+- **`misses`** — everything you asked for that resolved to nothing, named: an id,
+  a file `(no holders)`, a positional span as `file:start+lines`, a code span as
+  its file and first distinctive line.
+- **`moved`** — seeds that arrived through a refactor: the writer whose lines
+  were moved into the file you asked about, and the file it wrote them in. The
+  mover's turn says "moved"; this writer's says why.
 - **`budget`** — `massKept` (the share of relevance the walk kept), `truncated`,
   and `frontier` (ids to re-seed from if you want more).
 - **`newGround`** / **`unmatchable`** — diff and commit walks only: hunks with no
@@ -314,9 +325,9 @@ text; `n` caps them at 25). `node` — one attribution as it sits in this walk (
 or several at once (`ids: [...]`, up to 10 per call — past that the answer names the
 ones it did not serve): its intent, mass, role, holds, since, and who it replaced and
 who replaced it; its what/why, commits and owning path are `recon_get`'s, not the
-walk's. `now` — where this
-attribution's lines stand today. `origins` — where
-this decision started. `arc` — how `a` became `b`, step by step. `candidates` — did
+walk's. `now` — where this attribution's lines stand today: the heads that took them,
+with a count of the writes on the way. `origins` — where this decision started: the
+roots, the same way. `arc` — how `a` became `b`, step by step (the way itself). `candidates` — did
 anyone settle `a` and `b` (any pair). An id is the `atr_…` you were served; a unique
 prefix of it works too. If most of the nodes are seeds, `top` tells you little — start
 with `grep`.
@@ -330,19 +341,31 @@ against what they found. Before a change the ask is the lines you are about to
 touch; after a commit the ask is the diff, and the plugin runs the walk for you.
 Same recipe, same checks, one list:
 
-1. **Walk what you hold.** Read the file first. Seed with the exact lines that
-   carry a decision — a guard, a comparator, a consent check, the branch you are
-   about to change — one `code_spans` entry per region, several files in one
-   call. For a whole file, `code: "*"`. For a commit, the diff (just made) or
-   `commit` (older). Read the header: how many nodes, how many seeds, how much
-   mass was kept, whether it was truncated. Read `misses` too — a region the
-   record could not match is not "no history", it is "not looked up". When the
-   header's seed count is more than half the nodes, mass is flat: `grep` for the
-   words of your change — the function, the table, the flag — instead of `top`.
+1. **Walk what you hold.** The ask decides the seed; the record decides what
+   matters inside it. Before a change: the lines you are about to touch — a
+   guard, a comparator, a consent check, the branch you will change — one
+   `code_spans` entry per region. On a question: find the code the ask names
+   however you do that best (grep and glob the repo, follow imports, open the
+   directory), then seed the units that implement it — the function, the
+   handler, the route, the component, the migration — each quoted verbatim as
+   one `code_spans` entry, several files in one call, eight units at most (a long
+   unit's opening lines are enough; seventeen units gave 67 seeds and a flat,
+   unreadable graph). Not single lines picked for their importance, not whole
+   files; `code: "*"` only when the file is the thing (a short script, a plan
+   document). A plan number is its plan document
+   plus the units it names. After a commit: the diff (just made) or `commit`
+   (older) — the plugin does this one for you. Read the header: how many nodes,
+   how many seeds, how much mass was kept, whether it was truncated. Read
+   `misses` too — a region the record could not match is not "no history", it
+   is "not looked up". When the header's seed count is more than half the
+   nodes, mass is flat: `grep` for the words of your ask — the function, the
+   table, the flag — instead of `top`.
 2. **The replaced check** — *whose recorded reasoning do these lines carry, and
-   does my change honor it?* `node` every id in `checks.replaced` (one call,
-   `ids: [...]`; in practice everything above about 0.02 mass) and read each
-   intent in full. Before a change: am I about to reverse this reason? After a
+   does my change honor it?* `node` the ids in `checks.replaced` above about
+   0.02 mass — ten at most, one call, `ids: [...]`; when mass is flat, the first
+   ten (the list is mass-ordered) — and read each intent in full. An `intent` of
+   `null` is a turn that wrote code and said nothing: read the code, or
+   `recon_get` it for its what/why. Before a change: am I about to reverse this reason? After a
    commit: did I, and does the message say so? If the message names the change,
    it is deliberate; move on. If not, check the code first — the guard may have
    moved rather than disappeared — then raise it. An attribution whose `since`
@@ -350,13 +373,14 @@ Same recipe, same checks, one list:
    today and check that intent instead.
 3. **The overlaps check** — *two live intents on the same lines — did anyone
    settle it?* For each `checks.overlaps` pair, `node` both sides, then read the
-   pair's `candidates` — the later writes that took lines from both sides. One
-   whose intent addresses the disagreement settled it; taking lines from both is
-   not by itself a settling. An empty list means nobody ever built on both sides:
-   the conflict definitely stands — say so, and do not change that region (or,
-   after a commit, do not let the diff pick a side) without saying which side you
-   took and why. Skip a pair whose partner has no intent and today's date: that
-   is the record still catching up, not a dispute. For a pair the response did
+   pair's `candidates` — the later writes that took lines from both sides. A
+   candidate is often not a node of this walk: `recon_get` it. One whose intent
+   addresses the disagreement settled it; taking lines from both is not by
+   itself a settling. An empty list means nobody ever built on both sides: the
+   conflict definitely stands — say so, and do not change that region (or, after
+   a commit, do not let the diff pick a side) without saying which side you took
+   and why. A side with no intent and today's date is the record still catching
+   up, not a dispute: skip that pair. For a pair the response did
    not list: `verb: "candidates"`. The cross-file case — two mostly-alive
    attributions claiming different things about one mechanism, in different
    files — is yours to spot from the intents; reconcile from evidence, never by
@@ -369,10 +393,12 @@ Same recipe, same checks, one list:
    or name in one clause why it is not needed this time ("release bump — no code
    change"). If you cannot name the reason in one clause, treat it as the miss —
    the forgotten-companion class (a migration without its floor, a skill without
-   its dispatch) that no line-based reading can see. When most of the hunks are
-   new ground, the response carries a `recon (new ground)` block — who built and
-   decided about the files the additions land in; read those intents for
-   anything the additions cross, since they replace no one's lines.
+   its dispatch) that no line-based reading can see. When the plugin walked the
+   commit for you and most of the hunks are new ground, its serve carries a
+   `recon (new ground)` block — who built and decided about the files the
+   additions land in; read those intents for anything the additions cross, since
+   they replace no one's lines. A walk you called yourself carries no such
+   block: `grep` the walk for the files' names instead.
 5. **Origins, when the question is why.** `origins` walks back to the first
    decision. Cite the origin for "why is this shaped this way"; cite a head for
    "what is true now".
@@ -392,8 +418,12 @@ Same recipe, same checks, one list:
    > prior commits (last `<lastTogether>`), and no reason not to this time.
 
    Where the record holds nothing, say "no recorded reason" — never invent one.
-   Hunks under `newGround` have no recorded reason; say that. If nothing
-   conflicts, say **"Deep recon checks are clean."**
+   Hunks under `newGround` have no recorded reason; say that. Before a change or
+   after a commit, if nothing conflicts, say **"Deep recon checks are clean."**
+   On a question there is no change to check: close with what the record holds
+   on the ask, in the walk's own terms — what stands, what was replaced and by
+   what, which pairs are unsettled — each with its `atr_…` and the `rcn_…`. If
+   nothing bears on the ask, say so.
 
 ### Two more moves
 
@@ -409,7 +439,9 @@ check. Two moves the recipe reaches for less often, each ending in a receipt:
 ### 4. Cite
 
 When you report a finding, name the attribution and the walk it came from:
-`atr_…` (in walk `rcn_…`). When you queried a walk, say "Read rcn_…" in your response.
+`atr_…` (in walk `rcn_…`). When you queried a walk, say "Read rcn_…" in your response —
+the walk's own id from its header; each query reply ends with a marker of its own,
+which is that read's ledger row, not the walk.
 Don't count edges by eye — ask the graph. Don't summarize the graph — read it. A
 claim with no attribution or edge behind it is not a walk finding.
 
@@ -438,4 +470,4 @@ provenance for writes.
 
 ---
 
-*recon skill v1.0.20260908.4*
+*recon skill v1.0.20260908.11*
