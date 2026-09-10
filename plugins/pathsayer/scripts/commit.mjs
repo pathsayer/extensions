@@ -43,6 +43,44 @@ function literalWord(w) {
   return m ? m[1] : w;
 }
 
+/** The directory a shell command WORKS in, resolved from the command the way `commitDirOf` resolves
+ *  a commit's: a leading `cd <dir>` / `pushd <dir>` chain (literal words only; a variable, a
+ *  substitution or `cd -` is unresolvable → null), and a `git -C <dir>` on any git segment. Null
+ *  when the command names no directory of its own — the caller's cwd is the answer then. Used by
+ *  the fire to name the checkout a Bash command writes under (cwd + this), never to read HEAD. */
+export function cdTargetOf(cmd, cwd) {
+  if (typeof cmd !== 'string' || !cmd || typeof cwd !== 'string' || !cwd) return null;
+  let dir = cwd;
+  let named = false;
+  for (const seg of cmd.split(/&&|\|\||;|\n/)) {
+    const s = seg.trim().replace(/^\(+\s*/, '').replace(/\s*\)+$/, '');
+    const toks = s.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
+    if (toks[0] === 'cd' || toks[0] === 'pushd') {
+      const target = toks[1];
+      if (target === undefined) return null;
+      const lit = literalWord(target);
+      if (lit === null || lit === '-') return null;
+      dir = resolve(dir, lit);
+      named = true;
+      continue;
+    }
+    if (toks[0] !== 'git') continue;
+    let i = 1;
+    let at = dir;
+    while (i < toks.length && toks[i].startsWith('-')) {
+      if (toks[i] === '-C') {
+        const lit = literalWord(toks[i + 1]);
+        if (lit === null) return null;
+        at = resolve(at, lit);
+        named = true;
+        i += 2;
+      } else i += toks[i] === '-c' ? 2 : 1;
+    }
+    if (at !== dir) return at;
+  }
+  return named && dir !== cwd ? dir : null;
+}
+
 /** The directory the command's `git commit` ran in, resolved from the COMMAND (2026-09-08, another
  *  thread's review of 143): a preceding `cd <dir>` (chains compose), the matching segment's `-C
  *  <dir>` (several compose, as git composes them; relative to the cd'd directory), a subshell's

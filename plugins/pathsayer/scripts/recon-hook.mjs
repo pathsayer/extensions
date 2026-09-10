@@ -48,10 +48,10 @@
 // nothing to commit) is silence — a commit is never served as if its summary were code.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs'; // the root-commit cache (rootOf)
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { resolveOrigin, getBearer, dropBearer, readEpoch, bumpEpoch, detectHarness } from './lib/hookauth.mjs';
-import { DIRECTIVE, commitDirOf, isGitCommit } from './commit.mjs';
+import { DIRECTIVE, cdTargetOf, commitDirOf, isGitCommit } from './commit.mjs';
 
 /** The plugin's baked origin (build-generated); source-tree runs (the rig) fall back to
  *  prod, which the rig's PATHSAYER_ORIGIN pin overrides anyway. */
@@ -140,7 +140,13 @@ export function buildFire(lane, p) {
   const t = p.tool_input ?? {};
   const branch = branchOf(p.cwd);
   const repoRoot = rootOf(p.cwd);
+  const checkouts = checkoutsFor(p);
   const base = {
+    // A WRITE NAMES ITS OWN CHECKOUT: the checkout + root commit of the cwd AND of
+    // what this tool is about to write (an Edit/Write's file's parent, a Bash `cd`/`-C` target),
+    // asked of git at the write, in the directory. The server records the pairs beside the chain
+    // demand so the mint places the file the first time. Absent when no repo answers (fail-open).
+    ...(checkouts.length > 0 ? { checkouts } : {}),
     surface: surfaceOf(p),
     ...(typeof p.session_id === 'string' && p.session_id ? { session_id: p.session_id } : {}),
     ...(typeof p.prompt_id === 'string' && p.prompt_id ? { prompt_id: p.prompt_id } : {}),
@@ -238,6 +244,45 @@ export function rootOf(cwd) {
   } catch { return null; }
 }
 
+/** The checkout root (git's toplevel; in a linked worktree, the worktree's own root) of a
+ *  directory, or null: no git, not a repo. One git call; never throws. */
+export function toplevelOf(dir) {
+  if (typeof dir !== 'string' || !dir) return null;
+  try {
+    const top = git(dir, ['rev-parse', '--show-toplevel']).trim();
+    return top || null;
+  } catch { return null; }
+}
+
+/** The checkouts a fire names: the cwd's, and the one under whatever the tool is
+ *  about to write — an Edit/Write/MultiEdit/NotebookEdit's file's parent, a Bash command's
+ *  `cd …`/`-C` target (the commit hook's own resolution). Each pair is git's answer at the write:
+ *  `{ root: <toplevel>, anchor: <root commit> }`, one per distinct checkout, the cwd's first.
+ *  A directory git does not hold names nothing; the list is empty when nothing answers. */
+export function checkoutsFor(p) {
+  const t = p.tool_input ?? {};
+  const cwd = typeof p.cwd === 'string' && p.cwd ? p.cwd : null;
+  const dirs = [];
+  if (cwd) dirs.push(cwd);
+  const file = typeof t.file_path === 'string' && t.file_path ? t.file_path : typeof t.notebook_path === 'string' && t.notebook_path ? t.notebook_path : null;
+  if (file) dirs.push(dirname(file));
+  if (typeof t.command === 'string' && t.command && cwd) {
+    const target = cdTargetOf(t.command, cwd); // the `cd …` / `-C` target, commit or not
+    if (target && target !== cwd) dirs.push(target);
+  }
+  const out = [];
+  const seen = new Set();
+  for (const d of dirs) {
+    const root = toplevelOf(d);
+    if (!root || seen.has(root)) continue;
+    const anchor = rootOf(d);
+    if (!anchor) continue;
+    seen.add(root);
+    out.push({ root, anchor });
+  }
+  return out;
+}
+
 /** Deep recon on a commit — the fire: `null` = nothing to do (not a commit; no commit landed);
  *  `{ fallback: true }` = a commit landed but its diff is not postable (too large / unreadable)
  *  — emit the DIRECTIVE; otherwise the surface-carrying body with the diff, verbatim. The
@@ -262,11 +307,13 @@ export function buildCommitFire(p) {
   if (diff.length > DIFF_MAX_BYTES) return { fallback: true };
   const branch = branchOf(cwd);
   const repoRoot = rootOf(cwd);
+  const checkouts = checkoutsFor(p); // the commit names its checkout (cwd + the `cd` target)
   return {
     surface: surfaceOf(p),
     // the walk's marks know where the reader stands, and the fire demands the chain
     ...(branch ? { branch } : {}),
     ...(repoRoot ? { repo_root: repoRoot } : {}),
+    ...(checkouts.length > 0 ? { checkouts } : {}),
     ...(typeof p.session_id === 'string' && p.session_id ? { session_id: p.session_id } : {}),
     ...(typeof p.prompt_id === 'string' && p.prompt_id ? { prompt_id: p.prompt_id } : {}),
     ...(typeof p.agent_id === 'string' && p.agent_id ? { agent_id: p.agent_id } : {}),
