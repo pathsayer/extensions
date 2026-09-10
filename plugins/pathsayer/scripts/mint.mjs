@@ -17,6 +17,8 @@ import { existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 
 import { resolveOrigin, stageTicket, hasBearer, detectHarness } from './lib/hookauth.mjs';
+import { healQuietly } from './lib/self-heal.mjs'; // a frozen session runs current code: forward the older builds beside this one
+healQuietly(import.meta.url);
 
 /** The plugin's baked origin — generated at build (lib/origin.mjs); source-tree runs (the rig)
  *  fall back to prod, which the rig's env pins override anyway. */

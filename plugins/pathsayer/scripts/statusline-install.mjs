@@ -38,6 +38,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { healQuietly } from './lib/self-heal.mjs'; // a frozen session runs current code: forward the older builds beside this one
+healQuietly(import.meta.url);
 import { homedir } from 'node:os';
 import process from 'node:process';
 import { detectHarness } from './lib/hookauth.mjs';

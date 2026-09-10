@@ -51,7 +51,10 @@ import { readFileSync, writeFileSync } from 'node:fs'; // the root-commit cache 
 import { dirname, join } from 'node:path';
 
 import { resolveOrigin, getBearer, dropBearer, readEpoch, bumpEpoch, detectHarness } from './lib/hookauth.mjs';
+import { healQuietly } from './lib/self-heal.mjs'; // a frozen session runs current code: forward the older builds beside this one
+healQuietly(import.meta.url);
 import { DIRECTIVE, cdTargetOf, commitDirOf, isGitCommit } from './commit.mjs';
+import { pluginSuffix } from './lib/registered.mjs';
 
 /** The plugin's baked origin (build-generated); source-tree runs (the rig) fall back to
  *  prod, which the rig's PATHSAYER_ORIGIN pin overrides anyway. */
@@ -61,20 +64,29 @@ async function bakedOrigin() {
 
 /** x-pathsayer-plugin: `<harness>/<version>` — the build stamp from the plugin's own
  *  plugin.json (build.mjs writes it), the harness from the same detector that anchors shipping.
- *  Null when either is unknown (never guess a surface); the server then simply records nothing. */
-export function pluginTag(env, payload, version) {
+ *  Null when either is unknown (never guess a surface); the server then simply records nothing.
+ *  2026-09-10: `suffix` is `;registered=<v>;hooks=<same|stale>` (lib/registered.mjs) — what the
+ *  SESSION registered beside what RAN, since a frozen session forwarded to this build (self-heal)
+ *  reports this build's version; empty when unknown, and an old server ignores nothing it cannot
+ *  read because the bare form comes first. */
+export function pluginTag(env, payload, version, suffix = '') {
   const { harness } = detectHarness(env, payload);
   if (!harness || typeof version !== 'string' || version === '') return null;
-  return `${harness}/${version}`;
+  return `${harness}/${version}${typeof suffix === 'string' ? suffix : ''}`;
+}
+
+/** The plugin directory this entry runs from — the REAL file's, after any forwarder. */
+async function pluginRootDir() {
+  const { fileURLToPath } = await import('node:url');
+  const path = await import('node:path');
+  return path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 }
 
 async function bakedPluginVersion() {
   try {
     const { readFileSync } = await import('node:fs');
-    const { fileURLToPath } = await import('node:url');
     const path = await import('node:path');
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const pj = JSON.parse(readFileSync(path.join(here, '../.claude-plugin/plugin.json'), 'utf8'));
+    const pj = JSON.parse(readFileSync(path.join(await pluginRootDir(), '.claude-plugin/plugin.json'), 'utf8'));
     return typeof pj.version === 'string' ? pj.version : null;
   } catch {
     return null;
@@ -361,7 +373,11 @@ async function main() {
   try {
     // declare the plugin build (last-seen per account+harness on the server; the
     // /admin fleet reads it). Absent when harness or version is unknown — never guessed.
-    const tag = pluginTag(process.env, payload, await bakedPluginVersion());
+    // 2026-09-10 — and what the SESSION registered (CLAUDE_PLUGIN_ROOT) beside what ran, with
+    // whether its frozen event set still matches this build's; the ledger keeps both.
+    let suffix = '';
+    try { suffix = pluginSuffix(process.env, await pluginRootDir()); } catch { suffix = ''; }
+    const tag = pluginTag(process.env, payload, await bakedPluginVersion(), suffix);
     const res = await fetch(`${origin}/api/recon`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${tok.token}`, ...(tag ? { 'x-pathsayer-plugin': tag } : {}) },

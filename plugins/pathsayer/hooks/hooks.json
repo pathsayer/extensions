@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(ls -td \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\"/*/ | head -1)scripts/recon-hook.mjs\"",
+            "command": "node \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")/$(ls \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\" | sort -t. -k3,3n -k4,4n | tail -1)/scripts/recon-hook.mjs\"",
             "timeout": 8
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(ls -td \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\"/*/ | head -1)scripts/recon-hook.mjs\"",
+            "command": "node \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")/$(ls \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\" | sort -t. -k3,3n -k4,4n | tail -1)/scripts/recon-hook.mjs\"",
             "timeout": 8
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(ls -td \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\"/*/ | head -1)scripts/recon-hook.mjs\"",
+            "command": "node \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")/$(ls \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\" | sort -t. -k3,3n -k4,4n | tail -1)/scripts/recon-hook.mjs\"",
             "timeout": 8
           }
         ]
@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(ls -td \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\"/*/ | head -1)scripts/recon-hook.mjs\"",
+            "command": "node \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")/$(ls \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\" | sort -t. -k3,3n -k4,4n | tail -1)/scripts/recon-hook.mjs\"",
             "timeout": 8
           }
         ]
@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(ls -td \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\"/*/ | head -1)scripts/mint.mjs\""
+            "command": "node \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")/$(ls \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\" | sort -t. -k3,3n -k4,4n | tail -1)/scripts/mint.mjs\""
           }
         ]
       }
@@ -58,7 +58,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(ls -td \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\"/*/ | head -1)scripts/recon-hook.mjs\"",
+            "command": "node \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")/$(ls \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\" | sort -t. -k3,3n -k4,4n | tail -1)/scripts/recon-hook.mjs\"",
             "timeout": 8
           }
         ]
@@ -68,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(ls -td \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\"/*/ | head -1)scripts/recon-hook.mjs\"",
+            "command": "node \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")/$(ls \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\" | sort -t. -k3,3n -k4,4n | tail -1)/scripts/recon-hook.mjs\"",
             "timeout": 30
           }
         ]
@@ -79,12 +79,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(ls -td \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\"/*/ | head -1)scripts/recon-hook.mjs\"",
+            "command": "node \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")/$(ls \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\" | sort -t. -k3,3n -k4,4n | tail -1)/scripts/recon-hook.mjs\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "node \"$(ls -td \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\"/*/ | head -1)scripts/statusline-install.mjs\"",
+            "command": "node \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")/$(ls \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\" | sort -t. -k3,3n -k4,4n | tail -1)/scripts/statusline-install.mjs\"",
             "timeout": 5
           }
         ]
@@ -95,7 +95,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(ls -td \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\"/*/ | head -1)scripts/recon-hook.mjs\"",
+            "command": "node \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")/$(ls \"$(dirname \"${CLAUDE_PLUGIN_ROOT}\")\" | sort -t. -k3,3n -k4,4n | tail -1)/scripts/recon-hook.mjs\"",
             "timeout": 5
           }
         ]
