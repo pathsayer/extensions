@@ -71,6 +71,8 @@ async function main() {
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: directive } }));
 }
 
+// Ends by returning, never process.exit — Node 24 on Windows aborts at exit after a fetch
+// (2026-09-10, Cameron; the why is on recon-hook.mjs's tail, the pin is windows-exit.test.mjs).
 main()
-  .then(() => process.exit(0))
-  .catch(() => process.exit(0)); // fail-open: a mint-hook error must never block the turn
+  .then(() => { process.exitCode = 0; })
+  .catch(() => { process.exitCode = 0; }); // fail-open: a mint-hook error must never block the turn

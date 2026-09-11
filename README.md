@@ -26,7 +26,11 @@ adds a hook event, and a rewritten skill, still load at the next session start.
 
 (Installed before 2026-09-08 from `https://pathsayer.com/plugin/marketplace.json`?
 That channel is retired: `/plugin marketplace remove pathsayer`, then the two
-lines above.)
+lines above. Then verify from a shell, not the in-app UI:
+`claude plugin list` must show `pathsayer@pathsayer` enabled — an in-app
+`/plugin install` has been seen to report success and persist nothing, leaving
+every cached version orphaned and no hook firing; `claude plugin install
+pathsayer@pathsayer` from the shell fixes it.)
 
 ### Claude Code on the web (claude.ai/code)
 

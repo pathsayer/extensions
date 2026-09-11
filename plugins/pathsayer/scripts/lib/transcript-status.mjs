@@ -173,5 +173,7 @@ export function renderLine(sessionId, env = process.env) {
 
 // Direct-execution guard (the 2026-07 nudge lesson): importing must not read stdin.
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().then(() => process.exit(0)).catch(() => process.exit(0));
+  // ends by returning, never process.exit — Node 24 on Windows aborts at exit (2026-09-10, Cameron;
+  // the why is on recon-hook.mjs's tail, the pin is windows-exit.test.mjs)
+  main().then(() => { process.exitCode = 0; }).catch(() => { process.exitCode = 0; });
 }

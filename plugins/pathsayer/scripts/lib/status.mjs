@@ -7,7 +7,7 @@
 // line to the terminal in cells — the old ≤80 writer budget was a chosen number,
 // never a measured limit.
 //
-// File: /tmp/pathsayer-status-<session_id>
+// File: <statusDir>/pathsayer-status-<session_id> — /tmp, or the Windows temp directory on win32
 //   line 1: the display string (ANSI allowed; renderer passes it through)
 //   line 2: JSON sidecar {ts, op, surface, ...} — richer rendering later without
 //           touching writers. Staleness decay keys off file mtime, not the sidecar.
@@ -24,10 +24,19 @@ const DEFAULT_COLUMNS = 110;
 const DIM = '\x1b[2m';
 const UNDIM = '\x1b[22m';
 
-/** /tmp path for a session's status file; sid sanitized, empty → 'global'. */
+/** The ONE directory the writer and the renderer (statusline.sh) both name. The sh reads the
+ *  literal `/tmp`; on macOS and Linux that is the file, and os.tmpdir() is NOT (macOS: /var/folders/…).
+ *  On Windows the literal `/tmp` is C:\tmp for Node (absent) while Git Bash mounts /tmp as the Windows
+ *  temp directory (%TEMP%) — which is exactly os.tmpdir() there. Split by platform, never by tmpdir()
+ *  (2026-09-10, Cameron: the bar never showed content on Windows). */
+export function statusDir(platform = process.platform, tmp = tmpdir()) {
+  return platform === 'win32' ? tmp : '/tmp';
+}
+
+/** Path for a session's status file (statusDir + the session); sid sanitized, empty → 'global'. */
 export function statusPath(sessionId) {
   const sid = String(sessionId ?? '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64) || 'global';
-  return `/tmp/pathsayer-status-${sid}`;
+  return join(statusDir(), `pathsayer-status-${sid}`);
 }
 
 /** Word-boundary truncation with ellipsis (display-grapheme approximation). */

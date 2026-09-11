@@ -414,6 +414,11 @@ async function main() {
   process.stdout.write(JSON.stringify(body)); // the envelope, verbatim — the parity contract
 }
 
+// A hook ends by RETURNING, never by process.exit (2026-09-10, Cameron, Windows): on Node 24.15.0
+// for Windows a fetch() followed by an exit call trips libuv at teardown (`!(handle->flags &
+// UV_HANDLE_CLOSING)`, exit 0xC0000409) after the envelope was already written — every fire on
+// every lane reported as failed. exitCode + a drained loop exits 0 on every Node; the drain pin in
+// windows-exit.test.mjs is what keeps that from becoming a hang.
 main()
-  .then(() => process.exit(0))
-  .catch(() => process.exit(0)); // fail-open: an adapter error must never block the turn
+  .then(() => { process.exitCode = 0; })
+  .catch(() => { process.exitCode = 0; }); // fail-open: an adapter error must never block the turn

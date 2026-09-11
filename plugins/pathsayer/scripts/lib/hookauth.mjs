@@ -72,6 +72,11 @@ export function detectHarness(env, payload = {}) {
   if (entry === 'remote') return { harness: 'claude-code' };
   if (env.PATHSAYER_ENTRYPOINT_CLAUDE_CODE && entry === env.PATHSAYER_ENTRYPOINT_CLAUDE_CODE) return { harness: 'claude-code' };
   if (entry === 'cli') return { harness: 'claude-code' };
+  // 'claude-desktop' = the Claude desktop app's Code tab — the same harness on the same machine as
+  // `cli`, not a new surface. Measured 2026-09-10 (Cameron, Windows): unknown here, his desktop
+  // sessions never minted and sent no plugin header, so they served on a CLI-minted bearer and were
+  // invisible on /admin.
+  if (entry === 'claude-desktop') return { harness: 'claude-code' };
   return { harness: null };
 }
 
