@@ -21,8 +21,13 @@ connects the Pathsayer MCP server. On first use, run `/mcp` to authenticate.
 Turn on auto-update for the `pathsayer` marketplace in `/plugin` so releases
 arrive on their own; otherwise `/plugin update pathsayer@pathsayer`. From
 1.0.20260908.12 an update takes effect in the running session on its next hook
-fire — the hooks run the newest installed version, no restart. A release that
-adds a hook event, and a rewritten skill, still load at the next session start.
+fire — the hooks run the newest installed version, no restart. From
+1.0.20260916.2 the plugin keeps itself current: every hook reply tells it which
+build the marketplace serves, and a session behind it updates itself in the
+background (Claude Code, the public marketplace only). A release that adds a
+hook event, changes the MCP connection or rewrites the skill still loads at the
+next session start — the assistant tells you once to run `/reload-plugins`,
+naming what it picks up.
 
 (Installed before 2026-09-08 from `https://pathsayer.com/plugin/marketplace.json`?
 That channel is retired: `/plugin marketplace remove pathsayer`, then the two
@@ -47,7 +52,12 @@ environment, once, in its settings:
    claude plugin update pathsayer@pathsayer
    ```
    It runs before Claude Code starts, so the plugin is live at boot. The
-   `update` line refreshes an install a VM image may already carry.
+   `update` line refreshes an install a VM image may already carry — once, on
+   the day the environment is made: the script re-runs only when it is edited.
+   From 1.0.20260916.2 the plugin updates itself from inside a session, so a
+   later release reaches an environment on its own. An environment still holding
+   an older build crosses over once by hand: `claude plugin update
+   pathsayer@pathsayer` in any session (or edit the setup script).
 
 Every session in that environment then installs and arms itself; the recon hooks
 serve there like anywhere else, and once the environment holds a token (see

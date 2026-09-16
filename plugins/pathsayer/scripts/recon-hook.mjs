@@ -54,7 +54,11 @@ export { branchOf, rootOf, toplevelOf };
 import { healQuietly } from './lib/self-heal.mjs'; // a frozen session runs current code: forward the older builds beside this one
 healQuietly(import.meta.url);
 import { DIRECTIVE, cdTargetOf, commitDirOf, isGitCommit } from './commit.mjs';
-import { pluginSuffix } from './lib/registered.mjs';
+import { pluginSuffix, stampNoticed } from './lib/registered.mjs';
+// the server-told release (2026-09-16): decide + the detached updater, and the once-per-session
+// stderr line for a harness or root that cannot update itself
+import { decideUpdate, spawnUpdater } from './lib/self-update.mjs';
+import { originDir as hookOriginDir, stateDir as hookStateDir } from './lib/hookauth.mjs';
 
 /** The shallow-clone rule (2026-09-16) — the repo fields a fire sends for a cwd: the root when the
  *  checkout knows it; under a SHALLOW clone (the root would have been the depth boundary, and the
@@ -104,6 +108,43 @@ async function bakedPluginVersion() {
   } catch {
     return null;
   }
+}
+
+/** The server-told release (2026-09-16): compare `{ current, required }` with the build that ran
+ *  and, behind, hand the update to a detached child (the hook never waits). A harness or root that
+ *  cannot update itself is told so on stderr once per session, only under `required`. Never throws,
+ *  never costs the fire more than a stat. */
+async function maybeUpdate(release, { origin, sessionId, payload }) {
+  try {
+    if (!release || typeof release !== 'object') return;
+    const running = await bakedPluginVersion();
+    const root = await pluginRootDir();
+    const { harness } = detectHarness(process.env, payload);
+    const d = decideUpdate({ running, current: release.current ?? null, required: release.required ?? null, root, harness });
+    if (!d) return;
+    if (d.target) {
+      spawnUpdater({ target: d.target, running, originDir: hookOriginDir({ origin }), stateDir: hookStateDir({ origin, sessionId }), forced: d.forced === true });
+      return;
+    }
+    if (d.notice) {
+      const { existsSync, writeFileSync } = await import('node:fs');
+      const path = await import('node:path');
+      const once = path.join(hookStateDir({ origin, sessionId }), 'update-notice');
+      if (existsSync(once)) return;
+      try { writeFileSync(once, `${new Date().toISOString()}\n`); } catch { /* best-effort */ }
+      process.stderr.write(`Pathsayer: ${d.notice}\n`);
+    }
+  } catch { /* the release is never the fire's cost */ }
+}
+
+/** SessionStart asks: GET /api/plugin/release (public, two seconds) and compare. */
+async function askRelease(origin, ctx) {
+  let release = null;
+  try {
+    const res = await fetch(`${origin}/api/plugin/release`, { signal: AbortSignal.timeout(2000) });
+    if (res.ok) release = await res.json().catch(() => null);
+  } catch { release = null; }
+  if (release) await maybeUpdate(release, ctx);
 }
 
 /** The measured apply_patch grammar: per file-header, collect the body; the pre-image is the
@@ -325,8 +366,13 @@ async function main() {
     const ev = payload.hook_event_name;
     if (ev === 'PreCompact' || (ev === 'SessionStart' && payload.source === 'compact')) {
       await bumpEpoch({ origin, sessionId });
+      return; // a compaction: the epoch bump and nothing else
     }
-    return; // SessionStart(startup) and every other lifecycle fire: deliberately nothing.
+    // the server-told release (2026-09-16): a session's start (startup · resume · clear · fork)
+    // asks which build is current and, behind, hands the update to a detached child. Two seconds
+    // inside SessionStart's five; nothing on stdout; every other lifecycle fire stays nothing.
+    if (ev === 'SessionStart') await askRelease(origin, { origin, sessionId, payload });
+    return;
   }
   const commit = lane === 'commit';
   // the commit walk's failure shape is the DIRECTIVE, not silence (a commit is never silently
@@ -344,12 +390,12 @@ async function main() {
   if (!tok || (!tok.token && tok.source !== 'remote')) return fallback();
   fire.epoch = readEpoch({ origin, sessionId }); // S3-B: the client-declared counter rides every serve
   let body = null;
+  let suffix = ''; // hoisted: the notice stamp below reads what this fire declared
   try {
     // declare the plugin build (last-seen per account+harness on the server; the
     // /admin fleet reads it). Absent when harness or version is unknown — never guessed.
     // 2026-09-10 — and what the SESSION registered (CLAUDE_PLUGIN_ROOT) beside what ran, with
     // whether its frozen event set still matches this build's; the ledger keeps both.
-    let suffix = '';
     try { suffix = pluginSuffix(process.env, await pluginRootDir()); } catch { suffix = ''; }
     const tag = pluginTag(process.env, payload, await bakedPluginVersion(), suffix);
     const res = await fetch(`${origin}/api/recon`, {
@@ -373,6 +419,13 @@ async function main() {
   // STRIPPED so the stdout envelope stays verbatim (the parity contract below).
   const sidecar = body.pathsayer ?? null;
   if (sidecar) delete body.pathsayer;
+  // the server-told release (2026-09-16): every served lane compares the sidecar's release with
+  // the build that ran, at no extra request; behind → the detached updater. Never on stdout.
+  if (sidecar && sidecar.plugin && typeof sidecar.plugin === 'object') await maybeUpdate(sidecar.plugin, { origin, sessionId, payload });
+  // the reload notice (2026-09-16): this fire carried `notice=due` and the server served a prompt
+  // reply — the line was spoken for this frozen root; stamp it so no session on this root asks
+  // again (a tool-lane fire reports but never stamps: the line is spoken on the prompt lane only).
+  if (lane === 'prompt' && suffix.includes(';notice=due')) stampNoticed(process.env, { ran: await bakedPluginVersion() });
   // statusline presence → 2026-08-24 (Gary): EVERY served lane writes the bar from the
   // sidecar (the prompt-only gate retires — the sidecar rides every lane's response and the bar
   // shows files, never attribution text). Silence still paints on the prompt lane only: a dimmed
