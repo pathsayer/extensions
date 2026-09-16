@@ -67,9 +67,10 @@ export function detectHarness(env, payload = {}) {
   const entry = env.CLAUDE_CODE_ENTRYPOINT;
   if (!entry) return { harness: null };
   if (entry === 'remote_cowork') return { harness: 'cowork' };
-  // 'remote' = Claude Code on the web (claude.ai/code). Measured live
-  // (2026-08-25, CLI 2.1.245).
-  if (entry === 'remote') return { harness: 'claude-code' };
+  // 'remote' = Claude Code Web (claude.ai/code). Measured live (2026-08-25, CLI 2.1.245).
+  // 2026-09-15: its OWN harness — a repo's cloud sessions are their own substream, shared from
+  // the cloud device's card; the server reads its transcripts as Claude Code's format.
+  if (entry === 'remote') return { harness: 'claude-code-web' };
   if (env.PATHSAYER_ENTRYPOINT_CLAUDE_CODE && entry === env.PATHSAYER_ENTRYPOINT_CLAUDE_CODE) return { harness: 'claude-code' };
   if (entry === 'cli') return { harness: 'claude-code' };
   // 'claude-desktop' = the Claude desktop app's Code tab — the same harness on the same machine as
@@ -116,27 +117,93 @@ const ticketPath = (dir) => process.env.PATHSAYER_TICKET_FILE || join(dir, 'tick
  *  the old consumers mkdir'd before every write, and the rig proved the module must too). */
 const writeSecure = (path, data) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, data, { mode: 0o600 }); };
 
-/** The machine's bearer, or null. NO refresh skew — there is nothing to refresh. A
+// ── THE LADDER (2026-09-15) ──────────────────────────────────────────────────────
+// The bearer comes from, in order: (1) the TRAY's file — the signed-in tray mints the plugin's
+// client token through its own grant and writes it beside its bearer, env-keyed
+// (`~/.config/pathsayer/client-token-<host>.json`, `{ token, origin, minted_at }`); (2) the
+// PATHSAYER_TOKEN environment variable — a tray-less machine, or a cloud environment's credential;
+// (3) the cached bearer the mint directive redeemed (the un-migrated shape); (4) nothing. Rungs
+// 1 and 2 are READ every fire and never written, cached or deleted by a hook — the tray owns its
+// file's life (a 401 on a tray-sourced token deletes nothing; the tray's next start rewrites it).
+// The path is the OS home, never the crawl home: the tray writes where the OS says home is
+// (Windows: %USERPROFILE%), and a container has no tray.
+
+/** The tray's env key, exactly as the tray computes it (crawler `oauth::env_key`): host[:port]
+ *  with scheme and path stripped, any char outside [A-Za-z0-9.-] mapped to `_`. */
+export function envKeyOf(origin) {
+  const s = String(origin).trim().replace(/\/+$/, '');
+  const host = s.replace(/^https?:\/\//i, '').split('/')[0];
+  return host.replace(/[^A-Za-z0-9.-]/g, '_');
+}
+
+/** Where the tray writes the plugin's client token for this origin. */
+export function trayTokenPath({ origin }) {
+  return join(homedir(), '.config', 'pathsayer', `client-token-${envKeyOf(origin)}.json`);
+}
+
+/** Rung 1. A torn, empty, or other-origin file is absent — never a throw (hooks are fail-open). */
+function trayBearer({ origin }) {
+  try {
+    const f = JSON.parse(readFileSync(trayTokenPath({ origin }), 'utf8'));
+    if (!f || typeof f.token !== 'string' || f.token === '') return null;
+    if (typeof f.origin === 'string' && f.origin !== '' && envKeyOf(f.origin) !== envKeyOf(origin)) return null;
+    return { token: f.token, ingest_base: origin, source: 'tray' };
+  } catch { return null; }
+}
+
+/** Rung 2. */
+function envBearer({ origin }) {
+  const t = process.env.PATHSAYER_TOKEN;
+  return typeof t === 'string' && t !== '' ? { token: t, ingest_base: origin, source: 'env' } : null;
+}
+
+/** Rung 3 — the cached bearer, or null. NO refresh skew — there is nothing to refresh. A
  *  135 bearer carries no `expires_at` (it lives as long as its grant, which the server checks on
  *  every fire); a LEGACY bearer (pre-135, `expires_at` set) is honoured until it expires, then
  *  absent. The 30-minute cadence and its 2-minute skew were retired 2026-09-02. */
 function usableBearer(odir) {
   try {
     const b = JSON.parse(readFileSync(bearerPath(odir), 'utf8'));
-    if (b?.token && (typeof b.expires_at !== 'number' || b.expires_at > Date.now())) return b;
+    if (b?.token && (typeof b.expires_at !== 'number' || b.expires_at > Date.now())) return { ...b, source: 'cache' };
   } catch { /* absent or torn */ }
   return null;
 }
 
-/** Is this machine armed for the origin? The mint hook's check: no bearer → stage a ticket and
- *  direct the model to mint, ONCE; a bearer → silence, whatever session this is. */
-export function hasBearer({ origin }) {
-  return usableBearer(originDir({ origin })) !== null;
+/** Rungs 1 and 2 — the ones no lock guards (reads only, nothing of the hooks' own). */
+const outerBearer = ({ origin }) => trayBearer({ origin }) ?? envBearer({ origin });
+
+/** Claude Code Web: CLAUDE_CODE_ENTRYPOINT=remote (measured 2026-08-25) or CLAUDE_CODE_REMOTE
+ *  (the cloud-environments doc's name). Never a local cli, never codex. */
+export function isRemoteHarness(env) {
+  return env.CLAUDE_CODE_ENTRYPOINT === 'remote' || (typeof env.CLAUDE_CODE_REMOTE === 'string' && env.CLAUDE_CODE_REMOTE !== '');
 }
 
-/** The 401 path: the server said the grant is gone (S0's gate), so the machine
- *  bearer is dead; drop it and the next prompt's mint hook re-arms. Never for any other failure:
- *  a hiccup is not a revocation. */
+/** THE CLOUD RUNG (last, 2026-09-15): on Claude Code Web the environment attaches an API
+ *  credential to our host through its own proxy — the key never enters the sandbox, so no local
+ *  rung can hold it. With nothing local, a hook or the MCP proxy sends BARE (no Authorization
+ *  header) and lets the environment's proxy add it; a plain PATHSAYER_TOKEN variable (rung 2)
+ *  still wins when the environment passes one. The mint hook says nothing here: there is no tray
+ *  to sign in to, and the credential lives on the environment, not in the session. */
+function remoteBearer({ origin }) {
+  return isRemoteHarness(process.env) ? { token: null, ingest_base: origin, source: 'remote' } : null;
+}
+
+/** The machine's bearer by the ladder, WITHOUT a redeem: the tray's file, the variable, the
+ *  cached bearer, or the cloud's bare send — or null. What the MCP proxy reads on every message
+ *  (it never mints; a hook redeems through getBearer). */
+export function peekBearer({ origin }) {
+  return outerBearer({ origin }) ?? usableBearer(originDir({ origin })) ?? remoteBearer({ origin });
+}
+
+/** Is this machine armed for the origin, by any rung? The mint hook's check: none → one line to
+ *  the user (and, until the op retires, the directive), ONCE; any → silence, whatever session. */
+export function hasBearer({ origin }) {
+  return peekBearer({ origin }) !== null;
+}
+
+/** The 401 path for the CACHED bearer: the server said the grant is gone (S0's gate), so the
+ *  machine bearer is dead; drop it and the next prompt's mint hook re-arms. Never for any other
+ *  failure: a hiccup is not a revocation. Touches nothing of the tray's or the environment's. */
 export async function dropBearer({ origin }) {
   const odir = originDir({ origin });
   await withLock(odir, () => { try { unlinkSync(bearerPath(odir)); } catch { /* already gone */ } });
@@ -147,6 +214,9 @@ export async function dropBearer({ origin }) {
  *  → { token, ... } on success; { status: 'not_armed' | 'redeem_failed' | 'cache_write_failed' }
  *  otherwise. Never throws for flow reasons — hooks are fail-open. */
 export async function getBearer({ origin, sessionId, timeoutMs = 2_500, fetchImpl = fetch }) {
+  // Rungs 1 and 2 first: the tray's file or the environment — read, never redeemed or cached.
+  const outer = outerBearer({ origin });
+  if (outer) return outer;
   // The lock and the bearer are the ORIGIN's (one mint per machine); the ticket
   // being redeemed is this session's.
   const odir = originDir({ origin });
@@ -156,7 +226,7 @@ export async function getBearer({ origin, sessionId, timeoutMs = 2_500, fetchImp
     if (cached) return cached;
     let ticket;
     try { ticket = JSON.parse(readFileSync(ticketPath(dir), 'utf8')).ticket; } catch { /* none */ }
-    if (!ticket) return { status: 'not_armed' };
+    if (!ticket) return remoteBearer({ origin }) ?? { status: 'not_armed' }; // the cloud rung is last
     let res;
     try {
       res = await fetchImpl(`${origin}/mint/redeem`, {
@@ -178,9 +248,9 @@ export async function getBearer({ origin, sessionId, timeoutMs = 2_500, fetchImp
     try {
       writeSecure(bearerPath(odir), JSON.stringify(bundle));
     } catch {
-      return { status: 'cache_write_failed', ...bundle }; // spent ticket already deleted — reported, not retried
+      return { status: 'cache_write_failed', ...bundle, source: 'cache' }; // spent ticket already deleted — reported, not retried
     }
-    return bundle;
+    return { ...bundle, source: 'cache' };
   });
 }
 

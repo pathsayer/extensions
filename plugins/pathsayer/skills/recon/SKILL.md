@@ -81,7 +81,11 @@ construct yourself will not resolve. **Form follows shape:**
 
 - An attribution you name comes back **full**: `what`/`why`, `intent`, owning
   path, `commits`, `since` expanded — and, when the work was materially
-  revised, `now` in full: the head's complete `what`/`why`, not a teaser.
+  revised, `now` in full: the head's complete `what`/`why`, not a teaser. A turn
+  that did its work in **steps** (the assistant's narration between runs of
+  edits) lists them too: `steps`, every one in order — `idx`, `intent`, its own
+  `what`/`why` when it stated them, and the files it touched — the reasoning
+  grain inside the turn, one hop under the paragraph.
 - A **path** opens to its digest (summary, topics, commits) plus `attributions`:
   every one the path owns, in session order, in **short form** — `intent`,
   address, `atr_id`, author, owning path, one `since` line, and `now` when it
@@ -126,7 +130,11 @@ additional paths:
 **`attributions:`** — the turns: `[intent]` (the synthesis), date, author, its
 `atr_…` id, the address, its owning path, one `[since]` line (below), and — when
 the work was materially revised — a `[now]` block (below). The verbatim
-`what`/`why` is on `recon_get`.
+`what`/`why` is on `recon_get`. On a fire that holds lines (an edit, a read, a
+bash view, `code_spans`), a big turn's card may be a **step's**: the address line
+says `step 5 of 12` and the `[intent]` is what that step set out to do to these
+lines, not the whole turn's paragraph — the turn's other steps stay servable;
+`recon_get` the id to read them all.
 
 **`additional paths:`** — the arcs the ask bears on that no served attribution
 already belongs to, best first (paths several signals agree on come before
@@ -470,4 +478,4 @@ provenance for writes.
 
 ---
 
-*recon skill v1.0.20260910.5*
+*recon skill v1.0.20260915.20*

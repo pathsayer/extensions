@@ -1,8 +1,9 @@
 {
   "mcpServers": {
     "pathsayer": {
-      "type": "http",
-      "url": "https://pathsayer.com/mcp"
+      "type": "stdio",
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/mcp-proxy.mjs"]
     }
   }
 }

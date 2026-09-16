@@ -46,11 +46,11 @@
 // the walk cannot be served (not armed, server down, a very large diff) the adapter emits the
 // DIRECTIVE instead, and the model walks it itself. A commit command that did not land (rejected,
 // nothing to commit) is silence — a commit is never served as if its summary were code.
-import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs'; // the root-commit cache (rootOf)
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 
 import { resolveOrigin, getBearer, dropBearer, readEpoch, bumpEpoch, detectHarness } from './lib/hookauth.mjs';
+import { git, branchOf, rootOf, toplevelOf } from './lib/checkout.mjs';
+export { branchOf, rootOf, toplevelOf };
 import { healQuietly } from './lib/self-heal.mjs'; // a frozen session runs current code: forward the older builds beside this one
 healQuietly(import.meta.url);
 import { DIRECTIVE, cdTargetOf, commitDirOf, isGitCommit } from './commit.mjs';
@@ -222,49 +222,8 @@ const FRESH_COMMIT_S = 300;
  *  shortcut territory) — the DIRECTIVE goes out instead and the model walks what matters. */
 const DIFF_MAX_BYTES = 1_000_000;
 
-const git = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
-
-/** The checkout branch of the hook's cwd, or null: no cwd, no git, a detached HEAD
- *  (`rev-parse --abbrev-ref` says `HEAD`). One git call, ~5 ms; never throws. */
-export function branchOf(cwd) {
-  if (typeof cwd !== 'string' || !cwd) return null;
-  try {
-    const b = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).trim();
-    return b && b !== 'HEAD' ? b.slice(0, 200) : null;
-  } catch { return null; }
-}
-
-/** The repo's ROOT COMMIT (the anchor is `repo:<root>`; the tray's rule: the
- *  oldest root when histories grafted), or null. The root never changes and the walk to it is
- *  O(history), so it is cached once per checkout at `<git-common-dir>/pathsayer-root` (worktrees
- *  share it). Two cheap git calls on a hit, one long one on the first miss; never throws. */
-export function rootOf(cwd) {
-  if (typeof cwd !== 'string' || !cwd) return null;
-  try {
-    const common = git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']).trim();
-    if (!common) return null;
-    const cache = join(common, 'pathsayer-root');
-    try {
-      const hit = readFileSync(cache, 'utf8').trim();
-      if (/^[0-9a-f]{40}$/.test(hit)) return hit;
-    } catch { /* no cache yet */ }
-    const roots = git(cwd, ['rev-list', '--max-parents=0', 'HEAD']).trim().split('\n').map((l) => l.trim()).filter(Boolean);
-    const root = roots[roots.length - 1];
-    if (!root || !/^[0-9a-f]{40}$/.test(root)) return null;
-    try { writeFileSync(cache, root + '\n'); } catch { /* read-only checkout: no cache, still an answer */ }
-    return root;
-  } catch { return null; }
-}
-
-/** The checkout root (git's toplevel; in a linked worktree, the worktree's own root) of a
- *  directory, or null: no git, not a repo. One git call; never throws. */
-export function toplevelOf(dir) {
-  if (typeof dir !== 'string' || !dir) return null;
-  try {
-    const top = git(dir, ['rev-parse', '--show-toplevel']).trim();
-    return top || null;
-  } catch { return null; }
-}
+// (git · branchOf · rootOf · toplevelOf live in lib/checkout.mjs since 2026-09-15 — the cloud courier
+// anchors a shipped session with the same helpers the fires use.)
 
 /** The checkouts a fire names: the cwd's, and the one under whatever the tool is
  *  about to write — an Edit/Write/MultiEdit/NotebookEdit's file's parent, a Bash command's
@@ -367,7 +326,9 @@ async function main() {
   if (!fire) return;
   if (fire.fallback === true) return fallback();
   const tok = await getBearer({ origin, sessionId });
-  if (!tok?.token) return fallback(); // not armed yet — the mint hook arms; the next fire serves
+  // not armed yet — the mint hook arms; the next fire serves. The cloud rung (source remote) has no
+  // token of its own and sends BARE: the environment's proxy attaches the credential.
+  if (!tok || (!tok.token && tok.source !== 'remote')) return fallback();
   fire.epoch = readEpoch({ origin, sessionId }); // S3-B: the client-declared counter rides every serve
   let body = null;
   try {
@@ -380,15 +341,17 @@ async function main() {
     const tag = pluginTag(process.env, payload, await bakedPluginVersion(), suffix);
     const res = await fetch(`${origin}/api/recon`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${tok.token}`, ...(tag ? { 'x-pathsayer-plugin': tag } : {}) },
+      headers: { 'content-type': 'application/json', ...(tok.token ? { authorization: `Bearer ${tok.token}` } : {}), ...(tag ? { 'x-pathsayer-plugin': tag } : {}) },
       body: JSON.stringify(fire),
       // a walk is seconds, not the serve's sub-second (measured 2026-09-01: 0.4–0.6 s warm on
       // 37–53 nodes after the speed fixes; the absence miner and a large diff can add more)
       signal: AbortSignal.timeout(commit ? 25_000 : 7000),
     });
-    // 401 means the grant behind the machine bearer is gone (S0's gate): drop it so
-    // the next prompt's mint hook re-arms. Every other failure keeps it — a hiccup is not a revoke.
-    if (res.status === 401) { await dropBearer({ origin }); return fallback(); }
+    // 401 means the grant behind the machine bearer is gone (S0's gate): a CACHED bearer is
+    // dropped so the next prompt's mint hook re-arms; a tray-sourced or env-sourced token is
+    // never ours to delete (the tray owns its file; the environment set the variable) — the
+    // fire just falls back. Every other failure keeps everything — a hiccup is not a revoke.
+    if (res.status === 401) { if (tok.source === 'cache') await dropBearer({ origin }); return fallback(); }
     if (!res.ok) return fallback();
     body = await res.json().catch(() => null);
   } catch { return fallback(); /* transport — silent (or the directive), never block the turn */ }

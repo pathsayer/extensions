@@ -16,7 +16,7 @@ agents. This repo is **both**:
 /plugin install pathsayer@pathsayer
 ```
 
-This installs the skills (`/pathsayer:recon`, `/pathsayer:session-setup`) and
+This installs the skill (`/pathsayer:recon`) and
 connects the Pathsayer MCP server. On first use, run `/mcp` to authenticate.
 Turn on auto-update for the `pathsayer` marketplace in `/plugin` so releases
 arrive on their own; otherwise `/plugin update pathsayer@pathsayer`. From
@@ -32,13 +32,14 @@ lines above. Then verify from a shell, not the in-app UI:
 every cached version orphaned and no hook firing; `claude plugin install
 pathsayer@pathsayer` from the shell fixes it.)
 
-### Claude Code on the web (claude.ai/code)
+### Claude Code Web (claude.ai/code)
 
 Cloud sessions run on a fresh VM, so the plugin is installed by the
 environment, once, in its settings:
 
-1. Network access → **Custom**, and add `pathsayer.com`, `*.pathsayer.com` and
-   `github.com` (the default allowlist covers package registries only).
+1. Network access → **Custom**, check **Also include default list of common package
+   managers**, and add `pathsayer.com` to Allowed domains. (Nothing for GitHub: that
+   traffic rides the GitHub proxy and never passes the allowlist.)
 2. Setup script:
    ```
    claude plugin marketplace add pathsayer/extensions
@@ -49,8 +50,8 @@ environment, once, in its settings:
    `update` line refreshes an install a VM image may already carry.
 
 Every session in that environment then installs and arms itself; the recon hooks
-serve there like anywhere else. (Capture belongs to the Pathsayer tray on your
-machine today.)
+serve there like anywhere else, and once the environment holds a token (see
+**Tokens** below) its transcripts are captured as the session runs.
 
 ## Codex
 
@@ -101,12 +102,33 @@ curl --create-dirs -o ~/.claude/skills/recon/SKILL.md \
   https://raw.githubusercontent.com/pathsayer/extensions/main/skills/recon/SKILL.md
 ```
 
+## Tokens
+
+The plugin's hooks and MCP tools sign in through the **Pathsayer tray** on your machine: sign in
+once and the tray writes a client token they read. Nothing else to do on a laptop.
+
+**Claude Code Web** — on Home, beside Devices, **Connect Cloud Device** walks the three
+cloud-environment settings, once, with nothing in any repo (in the prompt box's environment
+dropdown, at claude.ai/code or in the Claude app, select "Add cloud environment..." or modify an
+existing environment from its settings gear in the Cloud submenu): network access set to Custom, the
+default package-manager list kept, and `pathsayer.com` in Allowed domains; a setup script that installs the plugin
+(`claude plugin marketplace add pathsayer/extensions` then `claude plugin install pathsayer@pathsayer`);
+and a `PATHSAYER_TOKEN` environment variable holding the token it creates. **Create** then adds
+the environment as a cloud device on Home, named **Claude Code Web** (rename it from its card). Its
+sessions are their own harness: a repo shared from that card is the stream **Claude Code Web ·
+owner/repo**, beside the laptop's **Claude Code · owner/repo**, placed wherever you choose — sharing
+is per harness × repo, per device, explicit, as on a laptop. Every new session there arrives signed in, and the
+device's card shows when a session there last reached Pathsayer ("never connected" means the
+network setting or the setup script is wrong). A token never expires; the one way to sign a cloud
+device out is the revoke icon beside its name on its card (it asks first). The device stays, reading
+"unlinked", with what it shared still in its spaces; the same icon then creates a new token for it.
+Signing out of the tray on a laptop does not touch it.
+
 ## What's here
 
 - **`recon`** — recall the reasoning and decisions behind existing work before
   building or editing it, and deep recon: the same recipe over a commit, run for
   you after every `git commit`.
-- **`session-setup`** — how a machine arms itself, once per connector.
 
 ---
 
