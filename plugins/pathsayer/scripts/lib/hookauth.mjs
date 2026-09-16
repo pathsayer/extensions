@@ -169,8 +169,24 @@ function usableBearer(odir) {
   return null;
 }
 
-/** Rungs 1 and 2 — the ones no lock guards (reads only, nothing of the hooks' own). */
-const outerBearer = ({ origin }) => trayBearer({ origin }) ?? envBearer({ origin });
+/** The migration (2026-09-15, Gary: "if i sign out of the tray wont i be in some half auth'd
+ *  state?" — yes, until this): a fire that read the TRAY's file retires the hooks' OWN cached
+ *  bearer for that origin (rung 3, the mint directive's redeem of months ago). Left in place it
+ *  outlived the tray's sign-out — the tray's file goes, the ladder falls through to a cache that is
+ *  still valid against the connector grant, and the hooks keep firing on a machine that reads
+ *  signed out. Only the tray rung retires it: a PATHSAYER_TOKEN machine has no tray to fall back
+ *  from. The tray's file is never touched here. Best effort, fail-open. */
+function retireCachedBearer({ origin }) {
+  try { unlinkSync(bearerPath(originDir({ origin }))); } catch { /* none, or not ours to remove */ }
+}
+
+/** Rungs 1 and 2 — the ones no lock guards (reads only, nothing of the hooks' own — except that a
+ *  tray-sourced read retires the hooks' own stale cache, above). */
+const outerBearer = ({ origin }) => {
+  const tray = trayBearer({ origin });
+  if (tray) { retireCachedBearer({ origin }); return tray; }
+  return envBearer({ origin });
+};
 
 /** Claude Code Web: CLAUDE_CODE_ENTRYPOINT=remote (measured 2026-08-25) or CLAUDE_CODE_REMOTE
  *  (the cloud-environments doc's name). Never a local cli, never codex. */
