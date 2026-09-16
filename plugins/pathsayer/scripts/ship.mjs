@@ -35,7 +35,7 @@ import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveOrigin, peekBearer, detectHarness, isRemoteHarness } from './lib/hookauth.mjs';
-import { displayNameOf, rootOf, toplevelOf } from './lib/checkout.mjs';
+import { displayNameOf, rootStateOf, toplevelOf } from './lib/checkout.mjs';
 
 const PROTOCOL_VERSION = 2;
 const RECONCILE_PROTOCOL_FACTS = 4;
@@ -97,14 +97,17 @@ function findTranscripts(dir, out = []) {
 }
 
 /** The anchor the fires would give this cwd: the repo's root commit (with the tray's display
- *  name), else the folder. */
+ *  name), else the folder. the shallow-clone rule, 2026-09-16 (R2): under a SHALLOW clone the root is unknown
+ *  (the parentless commit is the depth boundary — measured in Claude Code Web, declared as the
+ *  repo and refused `not_consented` every turn); the declaration then carries the boundary as its
+ *  key (a real commit this clone holds), the display the server resolves from, and
+ *  `rootKnown: false` — the server answers the resolved anchor on the need and the chunks adopt it. */
 function anchorFor(cwd) {
-  const root = rootOf(cwd);
-  if (root) {
-    const display = displayNameOf(cwd);
-    return { type: 'repo', key: `repo:${root}`, ...(display ? { display } : {}) };
-  }
-  return { type: 'folder', key: `folder:${cwd}` };
+  const st = rootStateOf(cwd);
+  const display = displayNameOf(cwd);
+  if (st.root) return { anchor: { type: 'repo', key: `repo:${st.root}`, ...(display ? { display } : {}) }, rootKnown: true };
+  if (!st.known && st.boundary) return { anchor: { type: 'repo', key: `repo:${st.boundary}`, ...(display ? { display } : {}) }, rootKnown: false };
+  return { anchor: { type: 'folder', key: `folder:${cwd}` }, rootKnown: true };
 }
 
 /** The tray's identity for a transcript (crawler scan.rs, the 06-12 rule): the path under the PROJECT
@@ -155,7 +158,11 @@ export async function ship(payload, env = process.env) {
   //    bare send, where the environment's own proxy attaches it)
   const origin = resolveOrigin({ baked: await bakedOrigin() });
   const bearer = peekBearer({ origin });
-  if (bearer === null) return { outcome: 'no_token' };
+  if (bearer === null) {
+    // the shallow-clone rule (R5) — every outcome says one line: silence was how a whole environment shipped nothing
+    say('no credential for this environment — set PATHSAYER_TOKEN (from /link on Home) in the environment\'s variables; transcripts are not being captured.');
+    return { outcome: 'no_token' };
+  }
   const authHeaders = bearer.token ? { authorization: `Bearer ${bearer.token}` } : {};
 
   // ── the transcripts
@@ -168,7 +175,7 @@ export async function ship(payload, env = process.env) {
   const byCwd = new Map();
   const placeOf = (cwd) => {
     let p = byCwd.get(cwd);
-    if (!p) { p = { anchor: anchorFor(cwd), checkoutRoot: toplevelOf(cwd) }; byCwd.set(cwd, p); }
+    if (!p) { p = { ...anchorFor(cwd), checkoutRoot: toplevelOf(cwd) }; byCwd.set(cwd, p); }
     return p;
   };
   const sessions = [];
@@ -184,12 +191,16 @@ export async function ship(payload, env = process.env) {
     // courier adopts the server's answer when another device set it (an `origin` need or answer)
     sessions.push({ id, slug, buf, eof, gen: 0, origin: 0, shippedTo: 0, ...place });
   }
-  if (sessions.length === 0) return { outcome: 'no_transcripts' };
+  if (sessions.length === 0) {
+    say(`no transcripts found under ${projectsDir} — nothing to ship this turn.`); // the shallow-clone rule (R5)
+    return { outcome: 'no_transcripts' };
+  }
   const version = await pluginVersion();
   const mine = new Map(sessions.map((s) => [s.id, s]));
 
   let shipped = 0;
   const refusedIds = new Set(); // once per run, per session — whichever wire refused it
+  const unresolvedIds = new Set(); // the shallow-clone rule — refused because a shallow clone's display resolved to zero or several repos
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const shippedBefore = shipped;
     // ── declare (the facts wire): what this VM holds, never `full`
@@ -199,7 +210,7 @@ export async function ship(payload, env = process.env) {
         protocol_version: RECONCILE_PROTOCOL_FACTS,
         device_id: 'cloud', // the schema wants a name; the door scopes the device from the token, never this
         account_id: '',
-        declarations: sessions.map((s) => ({ session_id: s.id, harness: CLOUD_HARNESS, anchor: s.anchor, byte_hwm: s.eof, generation: s.gen, prefix_sha: prefixSha(s.buf), origin_byte: s.origin })),
+        declarations: sessions.map((s) => ({ session_id: s.id, harness: CLOUD_HARNESS, anchor: s.anchor, byte_hwm: s.eof, generation: s.gen, prefix_sha: prefixSha(s.buf), origin_byte: s.origin, ...(s.rootKnown === false ? { root_known: false } : {}) })),
         full: false,
       }), 'POST');
     } catch (e) {
@@ -219,11 +230,33 @@ export async function ship(payload, env = process.env) {
     const rec = await res.json().catch(() => ({}));
     // the server's consent at the DECLARATION: a repo not enabled for this cloud device is refused
     // here, with no need — nothing of it is shipped, nothing of it counts as behind
-    for (const r of rec.refused ?? []) if (r?.reason === 'not_consented' && mine.has(r.session_id)) refusedIds.add(r.session_id);
+    for (const r of rec.refused ?? []) {
+      if (!r || !mine.has(r.session_id)) continue;
+      if (r.reason === 'not_consented') refusedIds.add(r.session_id);
+      // the shallow-clone rule (R3/R5) — the server could not resolve a shallow clone's repo from its display: zero
+      // or several enabled repos matched. Named, once per session per run: the display, and the
+      // anchor(s) it found (the one to enable, or the ambiguity to settle).
+      if (r.reason === 'unresolved_shallow_anchor' && !unresolvedIds.has(r.session_id)) {
+        unresolvedIds.add(r.session_id);
+        const cands = Array.isArray(r.candidates) ? r.candidates : [];
+        const display = typeof r.display === 'string' ? r.display : (mine.get(r.session_id)?.anchor?.display ?? '?');
+        say(cands.length === 0
+          ? `this checkout is a shallow clone (its repo root is unknown) and '${display}' matches no repo enabled for this cloud device — enable it from the device's Sharing settings on Home to capture this session.`
+          : cands.length === 1
+            ? `this checkout is a shallow clone (its repo root is unknown); '${display}' is ${cands[0]}, which is not enabled for this cloud device — enable it from the device's Sharing settings on Home to capture this session.`
+            : `this checkout is a shallow clone (its repo root is unknown) and '${display}' matches ${cands.length} repos on this device (${cands.join(', ')}) — the session is not captured until one of them is the only enabled '${display}'.`);
+      }
+    }
     const needs = (rec.needs ?? []).filter((n) => mine.has(n.session_id));
     let resynced = false;
     for (const need of needs) {
       const s = mine.get(need.session_id);
+      // the shallow-clone rule (R3) — the anchor the server RESOLVED this session under (a shallow clone's display →
+      // the device's enabled repo): adopted for the chunks, as an `origin` answer is adopted
+      if (need.anchor && typeof need.anchor.key === 'string' && need.anchor.key !== s.anchor.key) {
+        say(`this checkout is a shallow clone; the server resolved '${s.anchor.display ?? s.anchor.key}' to ${need.anchor.key} — shipping under it.`);
+        s.anchor = { ...s.anchor, ...need.anchor };
+      }
       // an `origin` need: the server holds a different origin for this session (another device set
       // it) — adopt it and re-declare under it; the next answer says what to ship, from where
       if (need.reason === 'origin') {
@@ -244,6 +277,7 @@ export async function ship(payload, env = process.env) {
           session_id: s.id,
           slug: s.slug || s.id,
           anchor: s.anchor,
+          ...(s.rootKnown === false ? { root_known: false } : {}), // the shallow-clone rule (R2) — the chunk door's belt resolves it too
           ...(s.checkoutRoot ? { checkout_root: s.checkoutRoot } : {}),
           origin_byte: s.origin,
           from_byte: hwm,
@@ -290,8 +324,8 @@ export async function ship(payload, env = process.env) {
     // itself). A round that shipped nothing is the confirm, and the run ends on it.
     if (!resynced && shipped === shippedBefore) break;
   }
-  const refused = refusedIds.size;
-  if (refused > 0) say(`${refused} session${refused === 1 ? '' : 's'} on a repo not enabled for this cloud device — enable it from the device's Sharing settings on Home to capture them.`);
+  const refused = refusedIds.size + unresolvedIds.size;
+  if (refusedIds.size > 0) say(`${refusedIds.size} session${refusedIds.size === 1 ? '' : 's'} on a repo not enabled for this cloud device — enable it from the device's Sharing settings on Home to capture them.`);
   return { outcome: 'ok', shipped, sessions: sessions.length, refused };
 }
 

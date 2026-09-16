@@ -49,12 +49,25 @@
 import { dirname } from 'node:path';
 
 import { resolveOrigin, getBearer, dropBearer, readEpoch, bumpEpoch, detectHarness } from './lib/hookauth.mjs';
-import { git, branchOf, rootOf, toplevelOf } from './lib/checkout.mjs';
+import { git, branchOf, rootOf, rootStateOf, displayNameOf, toplevelOf } from './lib/checkout.mjs';
 export { branchOf, rootOf, toplevelOf };
 import { healQuietly } from './lib/self-heal.mjs'; // a frozen session runs current code: forward the older builds beside this one
 healQuietly(import.meta.url);
 import { DIRECTIVE, cdTargetOf, commitDirOf, isGitCommit } from './commit.mjs';
 import { pluginSuffix } from './lib/registered.mjs';
+
+/** The shallow-clone rule (2026-09-16) — the repo fields a fire sends for a cwd: the root when the
+ *  checkout knows it; under a SHALLOW clone (the root would have been the depth boundary, and the
+ *  server's coverage gate silenced the fire on a repo that does not exist) `root_known: false` and
+ *  the display (org/repo from the origin remote) the server resolves the root from. Absent when
+ *  there is no repo (fail-open). */
+function repoFieldsOf(cwd) {
+  const st = rootStateOf(cwd);
+  if (st.root) return { repo_root: st.root };
+  if (st.known) return {};
+  const display = displayNameOf(cwd);
+  return { root_known: false, ...(display ? { repo_display: display } : {}) };
+}
 
 /** The plugin's baked origin (build-generated); source-tree runs (the rig) fall back to
  *  prod, which the rig's PATHSAYER_ORIGIN pin overrides anyway. */
@@ -151,7 +164,7 @@ export function shapeOf(p) {
 export function buildFire(lane, p) {
   const t = p.tool_input ?? {};
   const branch = branchOf(p.cwd);
-  const repoRoot = rootOf(p.cwd);
+  const repoFields = repoFieldsOf(p.cwd);
   const checkouts = checkoutsFor(p);
   const base = {
     // A WRITE NAMES ITS OWN CHECKOUT: the checkout + root commit of the cwd AND of
@@ -168,8 +181,9 @@ export function buildFire(lane, p) {
     // that is not where this terminal stands. Absent when there is none to read (fail-open).
     ...(branch ? { branch } : {}),
     // the repo's root, so the server can DEMAND this branch's chain now, before
-    // any transcript of this session is ingested. Absent when there is no repo (fail-open).
-    ...(repoRoot ? { repo_root: repoRoot } : {}),
+    // any transcript of this session is ingested. Absent when there is no repo (fail-open);
+    // `root_known: false` + `repo_display` under a shallow clone (the shallow-clone rule (R2)).
+    ...repoFields,
   };
   if (lane === 'edit') {
     if (p.tool_name === 'apply_patch') {
@@ -277,13 +291,12 @@ export function buildCommitFire(p) {
   if (!diff.trim()) return null; // a merge or an empty commit — nothing to walk
   if (diff.length > DIFF_MAX_BYTES) return { fallback: true };
   const branch = branchOf(cwd);
-  const repoRoot = rootOf(cwd);
   const checkouts = checkoutsFor(p); // the commit names its checkout (cwd + the `cd` target)
   return {
     surface: surfaceOf(p),
     // the walk's marks know where the reader stands, and the fire demands the chain
     ...(branch ? { branch } : {}),
-    ...(repoRoot ? { repo_root: repoRoot } : {}),
+    ...repoFieldsOf(cwd),
     ...(checkouts.length > 0 ? { checkouts } : {}),
     ...(typeof p.session_id === 'string' && p.session_id ? { session_id: p.session_id } : {}),
     ...(typeof p.prompt_id === 'string' && p.prompt_id ? { prompt_id: p.prompt_id } : {}),

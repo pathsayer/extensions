@@ -18,26 +18,50 @@ export function branchOf(cwd) {
   } catch { return null; }
 }
 
-/** The repo's ROOT COMMIT (the anchor is `repo:<root>`; the tray's rule: the
- *  oldest root when histories grafted), or null. The root never changes and the walk to it is
- *  O(history), so it is cached once per checkout at `<git-common-dir>/pathsayer-root` (worktrees
- *  share it). Two cheap git calls on a hit, one long one on the first miss; never throws. */
-export function rootOf(cwd) {
-  if (typeof cwd !== 'string' || !cwd) return null;
+/** the shallow-clone rule, 2026-09-16 (R1) — the root cache's name. v2 is written ONLY under a full clone; the v1
+ *  file (`pathsayer-root`) may hold a shallow clone's depth boundary (measured in Claude Code Web:
+ *  d37181a6… cached and declared for 991464ee…) and is never read again — every cache poisoned
+ *  before this rule is ignored without a sweep. A repo can be deepened, never re-shallowed, so
+ *  "never write under shallow" is sufficient going forward. */
+const ROOT_CACHE = 'pathsayer-root-v2';
+const HEX40 = /^[0-9a-f]{40}$/;
+const UNKNOWN = Object.freeze({ root: null, known: true, boundary: null });
+
+/** the shallow-clone rule (R1) — the repo's ROOT COMMIT and whether this checkout can KNOW it. `known: false` only
+ *  under a shallow clone (`rev-parse --is-shallow-repository`), where `rev-list --max-parents=0`
+ *  returns the depth BOUNDARY as if it were parentless — that sha rides as `boundary` (a commit
+ *  the clone does hold; the server may resolve from it) and never as the root. No git, not a
+ *  repo → root null, known true (nothing was withheld). The shallow check runs BEFORE the cache is
+ *  read or written. Never throws. */
+export function rootStateOf(cwd) {
+  if (typeof cwd !== 'string' || !cwd) return UNKNOWN;
   try {
     const common = git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']).trim();
-    if (!common) return null;
-    const cache = join(common, 'pathsayer-root');
+    if (!common) return UNKNOWN;
+    const parentless = () => git(cwd, ['rev-list', '--max-parents=0', 'HEAD']).trim().split('\n').map((l) => l.trim()).filter(Boolean);
+    if (git(cwd, ['rev-parse', '--is-shallow-repository']).trim() === 'true') {
+      const b = parentless();
+      const boundary = b[b.length - 1];
+      return { root: null, known: false, boundary: boundary && HEX40.test(boundary) ? boundary : null };
+    }
+    const cache = join(common, ROOT_CACHE);
     try {
       const hit = readFileSync(cache, 'utf8').trim();
-      if (/^[0-9a-f]{40}$/.test(hit)) return hit;
+      if (HEX40.test(hit)) return { root: hit, known: true, boundary: null };
     } catch { /* no cache yet */ }
-    const roots = git(cwd, ['rev-list', '--max-parents=0', 'HEAD']).trim().split('\n').map((l) => l.trim()).filter(Boolean);
+    // the oldest root when histories grafted (the tray's rule); O(history) once, then the cache
+    const roots = parentless();
     const root = roots[roots.length - 1];
-    if (!root || !/^[0-9a-f]{40}$/.test(root)) return null;
+    if (!root || !HEX40.test(root)) return UNKNOWN;
     try { writeFileSync(cache, root + '\n'); } catch { /* read-only checkout: no cache, still an answer */ }
-    return root;
-  } catch { return null; }
+    return { root, known: true, boundary: null };
+  } catch { return UNKNOWN; }
+}
+
+/** The repo's ROOT COMMIT (the anchor is `repo:<root>`), or null — null under a shallow clone
+ *  too (the shallow-clone rule (R1)): a caller that must say WHY reads `rootStateOf`. */
+export function rootOf(cwd) {
+  return rootStateOf(cwd).root;
 }
 
 /** The repo's display name, the tray's rule (crawler resolver.rs `repo_display_name`): `org/repo`

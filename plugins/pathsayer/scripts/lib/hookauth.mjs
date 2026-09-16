@@ -78,6 +78,11 @@ export function detectHarness(env, payload = {}) {
   // sessions never minted and sent no plugin header, so they served on a CLI-minted bearer and were
   // invisible on /admin.
   if (entry === 'claude-desktop') return { harness: 'claude-code' };
+  // the shallow-clone rule, 2026-09-16 (R6) — measured in Gary's web box: CLAUDE_CODE_ENTRYPOINT=remote_desktop
+  // (the 2026-08-25 measurement said `remote`). Any `remote_*` other than cowork (above) is the
+  // web harness; an explicit PATHSAYER_ENTRYPOINT_CLAUDE_CODE (above) still wins. Before this,
+  // every fire from the web omitted its build header — 345 on prod with no harness, no version.
+  if (entry.startsWith('remote_')) return { harness: 'claude-code-web' };
   return { harness: null };
 }
 
@@ -191,7 +196,12 @@ const outerBearer = ({ origin }) => {
 /** Claude Code Web: CLAUDE_CODE_ENTRYPOINT=remote (measured 2026-08-25) or CLAUDE_CODE_REMOTE
  *  (the cloud-environments doc's name). Never a local cli, never codex. */
 export function isRemoteHarness(env) {
-  return env.CLAUDE_CODE_ENTRYPOINT === 'remote' || (typeof env.CLAUDE_CODE_REMOTE === 'string' && env.CLAUDE_CODE_REMOTE !== '');
+  // the shallow-clone rule (R6) — three independent signals (the entrypoint prefix, CLAUDE_CODE_REMOTE, the
+  // environment-type variable), so losing any one cannot silently switch capture off: the courier's
+  // outcome for a laptop is `skip_local_capture`, which says nothing.
+  const entry = typeof env.CLAUDE_CODE_ENTRYPOINT === 'string' ? env.CLAUDE_CODE_ENTRYPOINT : '';
+  const set = (v) => typeof v === 'string' && v !== '';
+  return entry === 'remote' || entry.startsWith('remote_') || set(env.CLAUDE_CODE_REMOTE) || set(env.CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE);
 }
 
 /** THE CLOUD RUNG (last, 2026-09-15): on Claude Code Web the environment attaches an API
