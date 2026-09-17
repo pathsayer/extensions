@@ -34,8 +34,9 @@ import { createHash } from 'node:crypto';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { resolveOrigin, peekBearer, detectHarness, isRemoteHarness } from './lib/hookauth.mjs';
+import { resolveOrigin, peekBearer, heldSecrets, detectHarness, isRemoteHarness } from './lib/hookauth.mjs';
 import { displayNameOf, rootStateOf, toplevelOf } from './lib/checkout.mjs';
+import { maskExact } from './lib/mask.mjs';
 
 const PROTOCOL_VERSION = 2;
 const RECONCILE_PROTOCOL_FACTS = 4;
@@ -179,9 +180,13 @@ export async function ship(payload, env = process.env) {
     return p;
   };
   const sessions = [];
+  // the mask (2026-09-17): the whole buffer is masked once, here, so every page, prefix_sha and
+  // content_sha256 below derive from masked bytes and a secret can never straddle two pages. Same
+  // length by construction; the file on disk keeps its own bytes.
+  const secrets = heldSecrets({ origin });
   for (const f of files) {
     let buf;
-    try { buf = readFileSync(f); } catch { continue; }
+    try { buf = maskExact(readFileSync(f), secrets); } catch { continue; }
     const eof = alignedEof(buf);
     if (eof === 0) continue; // no complete line yet — hold
     const { id, slug } = identityOf(projectsDir, f);

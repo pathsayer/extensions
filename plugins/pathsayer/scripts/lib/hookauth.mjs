@@ -19,7 +19,19 @@ import { homedir } from 'node:os';
 /** Origin precedence: PATHSAYER_ORIGIN > legacy PATHSAYER_BASE (the named migration) > the
  *  plugin's BAKED default. Hooks never guess from ambient state beyond these. */
 export function resolveOrigin({ baked }) {
-  return process.env.PATHSAYER_ORIGIN || process.env.PATHSAYER_BASE || baked;
+  const fromEnv = process.env.PATHSAYER_ORIGIN || process.env.PATHSAYER_BASE;
+  if (fromEnv) return fromEnv;
+  // 2026-09-17 — THE ORIGIN FILE, below the variables and above the baked default: a cloud
+  // environment cannot set the session's environment, so the hosted install script (the website's
+  // /install/claude-code-web, run by the environment's one setup-script line) writes
+  // $HOME/.config/pathsayer/origin when it is given a non-default origin (dev). Resolved from
+  // homedir() exactly as trayTokenPath is — the two files live side by side. A missing, empty or
+  // malformed file is the baked default; the variables above stay the laptop's override.
+  try {
+    const fromFile = readFileSync(join(homedir(), '.config', 'pathsayer', 'origin'), 'utf8').trim();
+    if (/^https?:\/\/[^\s/]+$/i.test(fromFile)) return fromFile;
+  } catch { /* no origin file — the common case */ }
+  return baked;
 }
 
 /** The crawl home — /home/claude when its .claude exists, else os home. THE CONTAINER QUIRK
@@ -219,6 +231,18 @@ function remoteBearer({ origin }) {
  *  (it never mints; a hook redeems through getBearer). */
 export function peekBearer({ origin }) {
   return outerBearer({ origin }) ?? usableBearer(originDir({ origin })) ?? remoteBearer({ origin });
+}
+
+/** The mask's feed (2026-09-17): EVERY credential the ladder can see for this origin — the tray's file
+ *  (rung 1), the variable (rung 2), the cached bearer (rung 3) — not the first hit. What the mask
+ *  (lib/mask.mjs) is fed at each exit: a laptop with a tray file and an old cache holds two secrets;
+ *  a machine with none gets an empty list and masks nothing. Read-only, fail-open, never a throw. */
+export function heldSecrets({ origin }) {
+  const out = new Set();
+  try { const t = trayBearer({ origin }); if (t?.token) out.add(t.token); } catch { /* absent */ }
+  try { const e = envBearer({ origin }); if (e?.token) out.add(e.token); } catch { /* absent */ }
+  try { const c = usableBearer(originDir({ origin })); if (c?.token) out.add(c.token); } catch { /* absent */ }
+  return [...out];
 }
 
 /** Is this machine armed for the origin, by any rung? The mint hook's check: none → one line to

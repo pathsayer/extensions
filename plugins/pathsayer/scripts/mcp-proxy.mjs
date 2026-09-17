@@ -26,7 +26,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { resolveOrigin, peekBearer, detectHarness } from './lib/hookauth.mjs';
+import { resolveOrigin, peekBearer, heldSecrets, detectHarness } from './lib/hookauth.mjs';
+import { maskExactString } from './lib/mask.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -79,7 +80,8 @@ async function main() {
   /** One upstream POST. Returns { status, messages, sessionId }. */
   async function post(msg, tok, sessionId, timeoutMs) {
     const res = await fetch(`${origin}/local-mcp`, {
-      method: 'POST', headers: headersFor(tok, sessionId), body: JSON.stringify(msg), signal: AbortSignal.timeout(timeoutMs),
+      // the mask (2026-09-17): the model's own arguments go out as ONE serialized body, masked; the bearer header never is
+      method: 'POST', headers: headersFor(tok, sessionId), body: maskExactString(JSON.stringify(msg), heldSecrets({ origin })), signal: AbortSignal.timeout(timeoutMs),
     });
     const sid = res.headers.get('mcp-session-id') ?? sessionId ?? null;
     const type = res.headers.get('content-type') ?? '';

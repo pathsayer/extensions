@@ -121,10 +121,30 @@ once and the tray writes a client token they read. Nothing else to do on a lapto
 cloud-environment settings, once, with nothing in any repo (in the prompt box's environment
 dropdown, at claude.ai/code or in the Claude app, select "Add cloud environment..." or modify an
 existing environment from its settings gear in the Cloud submenu): network access set to Custom, the
-default package-manager list kept, and `pathsayer.com` in Allowed domains; a setup script that installs the plugin
-(`claude plugin marketplace add pathsayer/extensions` then `claude plugin install pathsayer@pathsayer`);
-and a `PATHSAYER_TOKEN` environment variable holding the token it creates. **Create** then adds
-the environment as a cloud device on Home, named **Claude Code Web** (rename it from its card). Its
+default package-manager list kept, `pathsayer.com` in Allowed domains, and ONE line in Setup script,
+which the modal shows with your token already in it:
+
+```sh
+curl -fsSL https://pathsayer.com/install/claude-code-web | PATHSAYER_TOKEN=<token> sh
+```
+
+The hosted script (readable at that URL) installs and updates the plugin and writes the token to the
+file the plugin reads first, `~/.config/pathsayer/client-token-pathsayer.com.json`, mode 0600 — so
+every session there arrives signed in. **Do not put the token in Environment variables**: the dialog's
+own caption says values there are visible to anyone using the environment, and they are copied into
+every process a session starts, including tools that have nothing to do with Pathsayer (measured
+2026-09-16: six processes held it). The token on that one line lives in the setup script's own
+process for milliseconds and never in the session's. If you set `PATHSAYER_TOKEN` as a variable
+earlier, delete it — the file wins anyway, but the variable is what leaks. On a **shared** Team or
+Enterprise environment every member can open the environment read-only and read the setup script,
+so the token in it is visible to your whole organization exactly as a variable would be; personal
+environments are the instruction. If your plan offers **API credentials** in that dialog (Pro and
+Max, per Anthropic's docs), prefer that — the key stays outside the session entirely. The file is the
+plugin's, not for reading: a session that prints it puts the token in its own local transcript. What
+LEAVES the environment is masked — the plugin replaces its own token, byte for byte, in every
+transcript chunk it ships and every recon fire or MCP call it posts, so the record never holds it; that
+covers the Pathsayer token only, never your other keys. **Create**
+then adds the environment as a cloud device on Home, named **Claude Code Web** (rename it from its card). Its
 sessions are their own harness: a repo shared from that card is the stream **Claude Code Web ·
 owner/repo**, beside the laptop's **Claude Code · owner/repo**, placed wherever you choose — sharing
 is per harness × repo, per device, explicit, as on a laptop. Every new session there arrives signed in, and the

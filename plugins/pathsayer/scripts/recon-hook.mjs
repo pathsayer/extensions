@@ -48,7 +48,8 @@
 // nothing to commit) is silence — a commit is never served as if its summary were code.
 import { dirname } from 'node:path';
 
-import { resolveOrigin, getBearer, dropBearer, readEpoch, bumpEpoch, detectHarness } from './lib/hookauth.mjs';
+import { resolveOrigin, getBearer, dropBearer, readEpoch, bumpEpoch, detectHarness, heldSecrets } from './lib/hookauth.mjs';
+import { maskExactString } from './lib/mask.mjs';
 import { git, branchOf, rootOf, rootStateOf, displayNameOf, toplevelOf } from './lib/checkout.mjs';
 export { branchOf, rootOf, toplevelOf };
 import { healQuietly } from './lib/self-heal.mjs'; // a frozen session runs current code: forward the older builds beside this one
@@ -401,7 +402,9 @@ async function main() {
     const res = await fetch(`${origin}/api/recon`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(tok.token ? { authorization: `Bearer ${tok.token}` } : {}), ...(tag ? { 'x-pathsayer-plugin': tag } : {}) },
-      body: JSON.stringify(fire),
+      // the mask (2026-09-17): the ONE serialized body is masked at the door — output, query,
+      // code_spans and the diff in one pass; the bearer header above is never masked
+      body: maskExactString(JSON.stringify(fire), heldSecrets({ origin })),
       // a walk is seconds, not the serve's sub-second (measured 2026-09-01: 0.4–0.6 s warm on
       // 37–53 nodes after the speed fixes; the absence miner and a large diff can add more)
       signal: AbortSignal.timeout(commit ? 25_000 : 7000),
