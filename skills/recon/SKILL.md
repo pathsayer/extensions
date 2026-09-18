@@ -42,8 +42,12 @@ recon — "recon X", "deep recon X", "what did we decide about X" — means deep
 
 **Search** — `recon` with `query` (one sentence, asked the way you'd ask a
 teammate) and/or `code_spans` (the code you hold). Omit `space_id`; recon
-resolves it. It is the same serve the hooks inject — one implementation — so
-what comes back is what a hook would have given you, as text:
+resolves it from the repo you are working in — the space that repo is shared
+to. If it answers that the repo is not shared to any space, nothing was
+searched: ask the person which space they mean and pass that `space_id` —
+never pick one yourself. It is the same serve the hooks inject — one
+implementation — so what comes back is what a hook would have given you, as
+text:
 
 ```
 call({ op: "recon", args: {
@@ -478,4 +482,4 @@ provenance for writes.
 
 ---
 
-*recon skill v1.0.20260917.3*
+*recon skill v1.0.20260918.3*

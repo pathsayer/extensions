@@ -252,6 +252,10 @@ const SILENT_WORDS = {
   image_mismatch: 'update plugin',
   // The caller is in no space at all — the one fire the server refuses outright. Open the app.
   no_space: 'no Pathsayer shared space found',
+  // 2026-09-18 — this repo (or folder) is shared into no space you are in, so nothing is served:
+  // what a fire serves lands in the transcript, and an unshared repo gets nothing from elsewhere.
+  no_placement: 'this repo is not shared to a space',
+  no_anchor: 'not shared to a space',
 };
 
 /** The op ran and served nothing — shown dimmed (ratified: experience it). When the server

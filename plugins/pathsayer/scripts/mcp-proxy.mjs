@@ -28,6 +28,7 @@ import { fileURLToPath } from 'node:url';
 
 import { resolveOrigin, peekBearer, heldSecrets, detectHarness } from './lib/hookauth.mjs';
 import { maskExactString } from './lib/mask.mjs';
+import { rootOf } from './lib/checkout.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -61,6 +62,9 @@ export function sseMessages(text) {
 async function main() {
   const origin = resolveOrigin({ baked: await bakedOrigin() });
   const harness = detectHarness(process.env, {}).harness;
+  // once, and LAZILY — on the first forwarded message, never before `initialize` is answered (its budget
+  // is under 100 ms and the root costs a few git calls, O(history) the first time in a repo)
+  let rootMemo; const repoRootOnce = () => (rootMemo === undefined ? (rootMemo = rootOf(process.cwd()) ?? null) : rootMemo);
   const write = (msg) => process.stdout.write(JSON.stringify(msg) + '\n');
   const errorFor = (id, code, message) => ({ jsonrpc: '2.0', id, error: { code, message } });
 
@@ -75,6 +79,12 @@ async function main() {
     ...(sessionId ? { 'mcp-session-id': sessionId } : {}),
     ...(harness ? { 'x-pathsayer-harness': harness } : {}),
     'x-pathsayer-plugin-version': pluginVersion(),
+    // 2026-09-18 — WHICH REPO the call came from: the root commit of the directory the harness
+    // started this proxy in (the hooks' own anchor rule — lib/checkout.mjs; null outside a repo and
+    // under a shallow clone, and then it says `none`). The recon ops resolve their space by that
+    // repo's PLACEMENT; with no root the server asks for a `space_id` — it never guesses one, since
+    // what recon returns becomes part of this session's transcript.
+    'x-pathsayer-repo-root': repoRootOnce() ?? 'none', // ALWAYS present from this release on: its presence is how the server tells a current proxy (strict — no fallback) from one that predates it (keeps the looser fallback)
   });
 
   /** One upstream POST. Returns { status, messages, sessionId }. */
