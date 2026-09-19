@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "pathsayer": {
+      "command": "node",
+      "args": [
+        "scripts/mcp-proxy.mjs"
+      ],
+      "cwd": ".",
+      "env_vars": [
+        "PATHSAYER_TOKEN",
+        "PATHSAYER_TOKEN_FILE",
+        "PATHSAYER_ORIGIN",
+        "PATHSAYER_BASE",
+        "PATHSAYER_HOOK_STATE",
+        "PATHSAYER_HARNESS"
+      ]
+    }
+  }
+}

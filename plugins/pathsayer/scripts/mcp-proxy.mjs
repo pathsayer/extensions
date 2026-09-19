@@ -46,7 +46,23 @@ export const NOT_SIGNED_IN =
   'Pathsayer: this machine is not signed in. Install and sign in to the Pathsayer tray, ' +
   'or set PATHSAYER_TOKEN from "Connect Cloud Device" on pathsayer.com/app.';
 
+/** Codex's MCP client, by the name its `initialize` carries — the stripped environment it hands a
+ *  stdio server names no harness (detectHarness reads nothing there). */
+const CODEX_CLIENT = 'codex-mcp-client';
+/** The capability a server declares to be told the session's directory, and the `_meta` key the
+ *  answer rides on (Codex: `MCP_SANDBOX_STATE_META_CAPABILITY`). */
+const SANDBOX_STATE = 'codex/sandbox-state-meta';
+
 const DEFAULT_INIT = { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'pathsayer-proxy', version: pluginVersion() } };
+
+/** The message as it goes upstream: Codex's sandbox state is read HERE (the session's directory) and
+ *  never forwarded — it is the person's permission profile and local paths, and the server has no use for it. */
+export function withoutSandboxState(msg) {
+  const meta = msg?.params?._meta;
+  if (!meta || typeof meta !== 'object' || !(SANDBOX_STATE in meta)) return msg;
+  const { [SANDBOX_STATE]: _dropped, ...rest } = meta;
+  return { ...msg, params: { ...msg.params, _meta: rest } };
+}
 
 /** Parse an SSE body into its `data:` payloads (each one a JSON-RPC message). */
 export function sseMessages(text) {
@@ -61,10 +77,30 @@ export function sseMessages(text) {
 
 async function main() {
   const origin = resolveOrigin({ baked: await bakedOrigin() });
-  const harness = detectHarness(process.env, {}).harness;
+  let harness = detectHarness(process.env, {}).harness;
   // once, and LAZILY — on the first forwarded message, never before `initialize` is answered (its budget
   // is under 100 ms and the root costs a few git calls, O(history) the first time in a repo)
   let rootMemo; const repoRootOnce = () => (rootMemo === undefined ? (rootMemo = rootOf(process.cwd()) ?? null) : rootMemo);
+  // 2026-09-19 — UNDER CODEX this process does NOT run in the session's directory. Codex expands no
+  // placeholder in a plugin's MCP entry, so its entry (build.mjs CODEX_MCP_SERVER) starts the proxy
+  // with `cwd` = the PLUGIN's folder — which in a cloud box can sit inside a clone of the marketplace
+  // repo, so `process.cwd()` would name the WRONG repo, and the recon ops resolve their space by that
+  // repo's placement. Codex says where the session is instead: a server that declares
+  // `capabilities.experimental[SANDBOX_STATE]` gets `_meta[SANDBOX_STATE].sandboxCwd` (a file:// URI)
+  // on every tools/call a model makes (witnessed, codex-cli 0.153.4). So under Codex the root is
+  // THAT CALL's directory, per call; with none — a call made through the app-server directly carries
+  // none — it is `none`, and the server asks for a `space_id`. It never reads process.cwd() here.
+  let codex = false;
+  const codexRoots = new Map(); // directory → root | null, for the life of the process
+  const codexRootOf = (msg) => {
+    const raw = msg?.params?._meta?.[SANDBOX_STATE]?.sandboxCwd;
+    if (typeof raw !== 'string' || !raw) return null;
+    let dir = raw;
+    if (raw.startsWith('file:')) { try { dir = fileURLToPath(raw); } catch { return null; } }
+    if (!codexRoots.has(dir)) codexRoots.set(dir, rootOf(dir) ?? null);
+    return codexRoots.get(dir);
+  };
+  const rootFor = (msg) => (codex ? codexRootOf(msg) : repoRootOnce());
   const write = (msg) => process.stdout.write(JSON.stringify(msg) + '\n');
   const errorFor = (id, code, message) => ({ jsonrpc: '2.0', id, error: { code, message } });
 
@@ -72,7 +108,7 @@ async function main() {
   let upstream = null; // { token, sessionId } once established
   let establishing = null; // single-flight
 
-  const headersFor = (tok, sessionId) => ({
+  const headersFor = (tok, sessionId, root) => ({
     'content-type': 'application/json',
     accept: 'application/json, text/event-stream',
     ...(tok?.token ? { authorization: `Bearer ${tok.token}` } : {}), // the cloud rung (source remote) sends bare
@@ -80,18 +116,19 @@ async function main() {
     ...(harness ? { 'x-pathsayer-harness': harness } : {}),
     'x-pathsayer-plugin-version': pluginVersion(),
     // 2026-09-18 — WHICH REPO the call came from: the root commit of the directory the harness
-    // started this proxy in (the hooks' own anchor rule — lib/checkout.mjs; null outside a repo and
+    // started this proxy in — under Codex, of the directory the CALL came from (rootFor, above) — (the
+    // hooks' own anchor rule — lib/checkout.mjs; null outside a repo and
     // under a shallow clone, and then it says `none`). The recon ops resolve their space by that
     // repo's PLACEMENT; with no root the server asks for a `space_id` — it never guesses one, since
     // what recon returns becomes part of this session's transcript.
-    'x-pathsayer-repo-root': repoRootOnce() ?? 'none', // ALWAYS present from this release on: its presence is how the server tells a current proxy (strict — no fallback) from one that predates it (keeps the looser fallback)
+    'x-pathsayer-repo-root': root ?? 'none', // ALWAYS present from this release on: its presence is how the server tells a current proxy (strict — no fallback) from one that predates it (keeps the looser fallback)
   });
 
   /** One upstream POST. Returns { status, messages, sessionId }. */
   async function post(msg, tok, sessionId, timeoutMs) {
     const res = await fetch(`${origin}/local-mcp`, {
       // the mask (2026-09-17): the model's own arguments go out as ONE serialized body, masked; the bearer header never is
-      method: 'POST', headers: headersFor(tok, sessionId), body: maskExactString(JSON.stringify(msg), heldSecrets({ origin })), signal: AbortSignal.timeout(timeoutMs),
+      method: 'POST', headers: headersFor(tok, sessionId, rootFor(msg)), body: maskExactString(JSON.stringify(withoutSandboxState(msg)), heldSecrets({ origin })), signal: AbortSignal.timeout(timeoutMs),
     });
     const sid = res.headers.get('mcp-session-id') ?? sessionId ?? null;
     const type = res.headers.get('content-type') ?? '';
@@ -127,9 +164,11 @@ async function main() {
     if (msg.method === 'initialize') {
       clientInit = msg.params ?? null;
       upstream = null; // a new client conversation — the upstream is told on the first real message
+      codex = msg.params?.clientInfo?.name === CODEX_CLIENT;
+      if (codex && !harness) harness = 'codex'; // an explicit PATHSAYER_HARNESS (forwarded by the Codex entry) still wins
       write({ jsonrpc: '2.0', id: msg.id, result: {
         protocolVersion: msg.params?.protocolVersion ?? DEFAULT_INIT.protocolVersion,
-        capabilities: { tools: { listChanged: false }, resources: { subscribe: false, listChanged: false } },
+        capabilities: { tools: { listChanged: false }, resources: { subscribe: false, listChanged: false }, ...(codex ? { experimental: { [SANDBOX_STATE]: {} } } : {}) },
         serverInfo: { name: 'pathsayer', version: pluginVersion() },
       } });
       return;
