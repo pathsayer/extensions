@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Pathsayer cloud COURIER (2026-09-15) — runs on Stop (every turn) and SessionEnd (the tail)
 // and ships this environment's transcripts to the client-token ingest door. It runs ONLY in a
-// remote harness (Claude Code Web: CLAUDE_CODE_ENTRYPOINT=remote / CLAUDE_CODE_REMOTE — or
+// remote harness (Claude Code Cloud: CLAUDE_CODE_ENTRYPOINT=remote / CLAUDE_CODE_REMOTE — or
 // PATHSAYER_SHIP=1, the laptop proof's pin) with a credential by the ladder; on a laptop the tray
 // captures, and this script ships nothing.
 //
@@ -44,9 +44,12 @@ const PREFIX_PROBE_BYTES = 4096;
 /** The tray's page (crawler sync.rs MAX_CHUNK_BYTES): a delta ships in pages of at most this, so
  *  the server's 24 MiB decompressed cap is never reached by a long-lived session's backlog. */
 const MAX_CHUNK_BYTES = 4 * 1024 * 1024;
-/** Claude Code Web is its OWN harness (2026-09-15): a repo's cloud sessions are their own
- *  substream, shared from the cloud device's card; the server reads the files as Claude Code's. */
-const CLOUD_HARNESS = 'claude-code-web';
+/** Claude Code Cloud is its OWN harness (2026-09-15): a repo's cloud sessions are their own
+ *  substream, shared from the cloud device's card; the server reads the files as Claude Code's.
+ *  Renamed from `claude-code-web` on 2026-09-18 (R10) so the two cloud harnesses rhyme.
+ *  THIS VALUE SHIPS AFTER THE SERVER, never before: a server without R10's frozen id recipe would
+ *  read the new name as a new substream and fork the person's repo off its history. */
+const CLOUD_HARNESS = 'claude-code-cloud';
 /** The tray reads a transcript's cwd from its HEAD only (crawler projects.rs read_head_cwd). */
 const HEAD_BYTES = 64 * 1024;
 const MAX_ROUNDS = 4; // declare → ship → confirm (a resync re-declares once more)
@@ -99,7 +102,7 @@ function findTranscripts(dir, out = []) {
 
 /** The anchor the fires would give this cwd: the repo's root commit (with the tray's display
  *  name), else the folder. the shallow-clone rule, 2026-09-16 (R2): under a SHALLOW clone the root is unknown
- *  (the parentless commit is the depth boundary — measured in Claude Code Web, declared as the
+ *  (the parentless commit is the depth boundary — measured in Claude Code Cloud, declared as the
  *  repo and refused `not_consented` every turn); the declaration then carries the boundary as its
  *  key (a real commit this clone holds), the display the server resolves from, and
  *  `rootKnown: false` — the server answers the resolved anchor on the need and the chunks adopt it. */
@@ -147,7 +150,7 @@ async function post(url, headers, body, kind) {
 export async function ship(payload, env = process.env) {
   // ── the surface gate: a remote harness (or the laptop proof's pin), the claude-code harness
   if (!isRemoteHarness(env) && env.PATHSAYER_SHIP !== '1') return { outcome: 'skip_local_capture' };
-  // the remote surface IS Claude Code Web: CLAUDE_CODE_REMOTE alone (the doc's name) carries
+  // the remote surface IS Claude Code Cloud: CLAUDE_CODE_REMOTE alone (the doc's name) carries
   // no entrypoint for detectHarness to read, so remote + unknown reads as claude-code here
   // what ships is always the web harness — its sessions are their own substream per repo; a laptop
   // proof (PATHSAYER_SHIP=1 under `cli`) ships as the web too, since that is what it stands in for

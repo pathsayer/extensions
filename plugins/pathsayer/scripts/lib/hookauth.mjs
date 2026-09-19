@@ -23,7 +23,7 @@ export function resolveOrigin({ baked }) {
   if (fromEnv) return fromEnv;
   // 2026-09-17 — THE ORIGIN FILE, below the variables and above the baked default: a cloud
   // environment cannot set the session's environment, so the hosted install script (the website's
-  // /install/claude-code-web, run by the environment's one setup-script line) writes
+  // /install/claude-code-cloud, run by the environment's one setup-script line) writes
   // $HOME/.config/pathsayer/origin when it is given a non-default origin (dev). Resolved from
   // homedir() exactly as trayTokenPath is — the two files live side by side. A missing, empty or
   // malformed file is the baked default; the variables above stay the laptop's override.
@@ -79,10 +79,13 @@ export function detectHarness(env, payload = {}) {
   const entry = env.CLAUDE_CODE_ENTRYPOINT;
   if (!entry) return { harness: null };
   if (entry === 'remote_cowork') return { harness: 'cowork' };
-  // 'remote' = Claude Code Web (claude.ai/code). Measured live (2026-08-25, CLI 2.1.245).
-  // 2026-09-15: its OWN harness — a repo's cloud sessions are their own substream, shared from
-  // the cloud device's card; the server reads its transcripts as Claude Code's format.
-  if (entry === 'remote') return { harness: 'claude-code-web' };
+  // 'remote' = Claude Code Cloud (claude.ai/code and the other cloud entries). Measured live
+  // (2026-08-25, CLI 2.1.245). 2026-09-15: its OWN harness — a repo's cloud sessions are their own
+  // substream, shared from the cloud device's card; the server reads its transcripts as Claude
+  // Code's format. Renamed from `claude-code-web` on 2026-09-18 (R10): one environment
+  // serves the Desktop app, the mobile app, `claude --cloud`, routines and Claude Tag, so "web"
+  // named only one of its entries. Ships AFTER the server (see CLOUD_HARNESS in ship.mjs).
+  if (entry === 'remote') return { harness: 'claude-code-cloud' };
   if (env.PATHSAYER_ENTRYPOINT_CLAUDE_CODE && entry === env.PATHSAYER_ENTRYPOINT_CLAUDE_CODE) return { harness: 'claude-code' };
   if (entry === 'cli') return { harness: 'claude-code' };
   // 'claude-desktop' = the Claude desktop app's Code tab — the same harness on the same machine as
@@ -94,7 +97,7 @@ export function detectHarness(env, payload = {}) {
   // (the 2026-08-25 measurement said `remote`). Any `remote_*` other than cowork (above) is the
   // web harness; an explicit PATHSAYER_ENTRYPOINT_CLAUDE_CODE (above) still wins. Before this,
   // every fire from the web omitted its build header — 345 on prod with no harness, no version.
-  if (entry.startsWith('remote_')) return { harness: 'claude-code-web' };
+  if (entry.startsWith('remote_')) return { harness: 'claude-code-cloud' };
   return { harness: null };
 }
 
@@ -205,7 +208,7 @@ const outerBearer = ({ origin }) => {
   return envBearer({ origin });
 };
 
-/** Claude Code Web: CLAUDE_CODE_ENTRYPOINT=remote (measured 2026-08-25) or CLAUDE_CODE_REMOTE
+/** Claude Code Cloud: CLAUDE_CODE_ENTRYPOINT=remote (measured 2026-08-25) or CLAUDE_CODE_REMOTE
  *  (the cloud-environments doc's name). Never a local cli, never codex. */
 export function isRemoteHarness(env) {
   // the shallow-clone rule (R6) — three independent signals (the entrypoint prefix, CLAUDE_CODE_REMOTE, the
@@ -216,7 +219,7 @@ export function isRemoteHarness(env) {
   return entry === 'remote' || entry.startsWith('remote_') || set(env.CLAUDE_CODE_REMOTE) || set(env.CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE);
 }
 
-/** THE CLOUD RUNG (last, 2026-09-15): on Claude Code Web the environment attaches an API
+/** THE CLOUD RUNG (last, 2026-09-15): on Claude Code Cloud the environment attaches an API
  *  credential to our host through its own proxy — the key never enters the sandbox, so no local
  *  rung can hold it. With nothing local, a hook or the MCP proxy sends BARE (no Authorization
  *  header) and lets the environment's proxy add it; a plain PATHSAYER_TOKEN variable (rung 2)

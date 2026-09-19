@@ -37,7 +37,7 @@ lines above. Then verify from a shell, not the in-app UI:
 every cached version orphaned and no hook firing; `claude plugin install
 pathsayer@pathsayer` from the shell fixes it.)
 
-### Claude Code Web (claude.ai/code)
+### Claude Code Cloud (claude.ai/code)
 
 Cloud sessions run on a fresh VM, so the plugin is installed by the
 environment, once, in its settings:
@@ -117,7 +117,7 @@ curl --create-dirs -o ~/.claude/skills/recon/SKILL.md \
 The plugin's hooks and MCP tools sign in through the **Pathsayer tray** on your machine: sign in
 once and the tray writes a client token they read. Nothing else to do on a laptop.
 
-**Claude Code Web** — on Home, beside Devices, **Connect Cloud Device** walks the three
+**Claude Code Cloud** — on Home, beside Devices, **Connect Cloud Device** walks the three
 cloud-environment settings, once, with nothing in any repo (in the prompt box's environment
 dropdown, at claude.ai/code or in the Claude app, select "Add cloud environment..." or modify an
 existing environment from its settings gear in the Cloud submenu): network access set to Custom, the
@@ -144,8 +144,8 @@ plugin's, not for reading: a session that prints it puts the token in its own lo
 LEAVES the environment is masked — the plugin replaces its own token, byte for byte, in every
 transcript chunk it ships and every recon fire or MCP call it posts, so the record never holds it; that
 covers the Pathsayer token only, never your other keys. **Create**
-then adds the environment as a cloud device on Home, named **Claude Code Web** (rename it from its card). Its
-sessions are their own harness: a repo shared from that card is the stream **Claude Code Web ·
+then adds the environment as a cloud device on Home, named **Claude Code Cloud** (rename it from its card). Its
+sessions are their own harness: a repo shared from that card is the stream **Claude Code Cloud ·
 owner/repo**, beside the laptop's **Claude Code · owner/repo**, placed wherever you choose — sharing
 is per harness × repo, per device, explicit, as on a laptop. Every new session there arrives signed in, and the
 device's card shows when a session there last reached Pathsayer ("never connected" means the
