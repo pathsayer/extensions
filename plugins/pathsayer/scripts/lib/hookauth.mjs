@@ -73,9 +73,24 @@ export function stateDir({ origin, sessionId }) {
  *  The label only (nothing ships, so there is no "shippable" bit): it anchors
  *  the plugin build header and the mint policy. PATHSAYER_HARNESS forces it (the rig's seam).
  *  Unknown → null: never guess a surface (a wrong harness fragments substreams). */
+/** The originator VALUE Codex's cloud environments set (measured 2026-09-18/19: the agent env's
+ *  CODEX_INTERNAL_ORIGINATOR_OVERRIDE, and the rollout's session_meta.originator, both read this).
+ *  The variable's name says override — any Codex surface may set it to name itself — so it is the
+ *  VALUE that means the cloud, never the variable's presence (ruled 2026-09-21). */
+export const CODEX_CLOUD_ORIGINATOR = 'codex_web_agent';
+
+/** Is this process running in a Codex cloud environment? The courier's and the proxy's gate
+ *  (the proxy sees it only when the Codex MCP entry forwards the variable — build.mjs env_vars). */
+export function isCodexCloud(env) {
+  return env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE === CODEX_CLOUD_ORIGINATOR;
+}
+
 export function detectHarness(env, payload = {}) {
   if (env.PATHSAYER_HARNESS) return { harness: env.PATHSAYER_HARNESS };
-  if (payload.turn_id != null) return { harness: 'codex' };
+  // 2026-09-21 — a Codex hook fire (turn_id) in a cloud environment (the originator's value) is
+  // Codex Cloud: its own harness, its own substream per repo, shared from the cloud device's card.
+  // The signal without a fire names nothing: a non-hook process is not a hook.
+  if (payload.turn_id != null) return { harness: isCodexCloud(env) ? 'codex-cloud' : 'codex' };
   const entry = env.CLAUDE_CODE_ENTRYPOINT;
   if (!entry) return { harness: null };
   if (entry === 'remote_cowork') return { harness: 'cowork' };

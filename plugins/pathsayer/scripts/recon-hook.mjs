@@ -124,7 +124,7 @@ async function maybeUpdate(release, { origin, sessionId, payload }) {
     const d = decideUpdate({ running, current: release.current ?? null, required: release.required ?? null, root, harness });
     if (!d) return;
     if (d.target) {
-      spawnUpdater({ target: d.target, running, originDir: hookOriginDir({ origin }), stateDir: hookStateDir({ origin, sessionId }), forced: d.forced === true });
+      spawnUpdater({ target: d.target, running, originDir: hookOriginDir({ origin }), stateDir: hookStateDir({ origin, sessionId }), forced: d.forced === true, ...(d.verbs ? { verbs: d.verbs } : {}) }); // 2026-09-21 — the harness's own verbs
       return;
     }
     if (d.notice) {

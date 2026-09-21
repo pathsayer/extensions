@@ -43,10 +43,26 @@ export function marketplaceRootOf(root) {
   return { marketplace: mp, stamp };
 }
 
-const noticeLine = (running, required) => `plugin ${running} is behind ${required}; run \`claude plugin update ${PLUGIN}\`.`;
+/** 2026-09-21 — EVERY HARNESS UPDATES ITSELF (Gary, 2026-09-18: "why on earth would we only allow
+ *  claude code to auto update, that was a bad decision"). Which VERBS a harness updates through:
+ *  Claude Code and Claude Code Cloud through `claude`'s (a cloud environment is a filesystem
+ *  snapshot nobody else refreshes — the laptop's rule applies); Codex and Codex Cloud through
+ *  `codex`'s own — its marketplace refresh and its install verb, the same verb the cloud's setup
+ *  script runs — never by spawning `claude`. An unknown harness has none. */
+export function verbsFor(harness) {
+  if (harness === 'claude-code' || harness === 'claude-code-cloud') return 'claude';
+  if (harness === 'codex' || harness === 'codex-cloud') return 'codex';
+  return null;
+}
+const VERBS = {
+  claude: { marketplace: ['plugin', 'marketplace', 'update', MARKETPLACE], update: ['plugin', 'update', PLUGIN, '-y', '--json'], line: `claude plugin update ${PLUGIN}` },
+  codex: { marketplace: ['plugin', 'marketplace', 'upgrade', MARKETPLACE], update: ['plugin', 'add', PLUGIN], line: `codex plugin marketplace upgrade ${MARKETPLACE} && codex plugin add ${PLUGIN}` },
+};
+const noticeLine = (running, required, verbs = 'claude') => `plugin ${running} is behind ${required}; run \`${(VERBS[verbs] ?? VERBS.claude).line}\`.`;
 
-/** The decision, pure: null (nothing), { target, forced } (update to target), or { notice }
- *  (a harness or root that cannot update itself, below the floor). */
+/** The decision, pure: null (nothing), { target, forced[, verbs] } (update to target — `verbs`
+ *  names the harness's own verbs when they are not Claude's), or { notice } (a harness or root that
+ *  cannot update itself, below the floor). */
 export function decideUpdate({ running, current, required, root, harness }) {
   const cur = typeof current === 'string' && STAMP.test(current) ? current : null;
   const req = typeof required === 'string' && STAMP.test(required) ? required : null;
@@ -54,11 +70,12 @@ export function decideUpdate({ running, current, required, root, harness }) {
   if (run === null || (cur === null && req === null)) return null;
   const belowFloor = req !== null && compareStamps(run, req) < 0;
   const mp = marketplaceRootOf(root);
-  const canUpdate = harness === 'claude-code' && mp !== null && mp.marketplace === MARKETPLACE;
-  if (!canUpdate) return belowFloor ? { notice: noticeLine(run, req) } : null;
+  const verbs = verbsFor(harness);
+  const canUpdate = verbs !== null && mp !== null && mp.marketplace === MARKETPLACE;
+  if (!canUpdate) return belowFloor ? { notice: noticeLine(run, req, verbs ?? 'claude') } : null;
   const behind = cur !== null && compareStamps(run, cur) < 0;
-  if (behind) return { target: cur, forced: belowFloor };
-  if (belowFloor) return { notice: noticeLine(run, req) }; // a floor above what the marketplace serves: nothing to install
+  if (behind) return { target: cur, forced: belowFloor, ...(verbs === 'claude' ? {} : { verbs }) };
+  if (belowFloor) return { notice: noticeLine(run, req, verbs) }; // a floor above what the marketplace serves: nothing to install
   return null;
 }
 
@@ -82,7 +99,7 @@ export function throttleState({ originDir, target, nowMs = Date.now() }) {
 
 /** Spawn the detached runner for `target`. Returns the child, or null when held (the machine
  *  stamp; or, forced, the session stamp). Never throws. */
-export function spawnUpdater({ target, running, originDir, stateDir, forced = false, env = process.env, nowMs = Date.now() }) {
+export function spawnUpdater({ target, running, originDir, stateDir, forced = false, verbs = 'claude', env = process.env, nowMs = Date.now() }) {
   try {
     if (forced) {
       if (typeof stateDir === 'string' && stateDir !== '') {
@@ -94,7 +111,7 @@ export function spawnUpdater({ target, running, originDir, stateDir, forced = fa
     const stamp = stampPath(originDir, target);
     try { mkdirSync(originDir, { recursive: true }); } catch { /* exists */ }
     writeFileSync(stamp, JSON.stringify({ at: nowMs, outcome: 'started', from: running ?? null }));
-    const child = spawn(process.execPath, [fileURLToPath(import.meta.url), '--target', target, '--from', String(running ?? '?'), '--log', join(originDir, UPDATE_LOG), '--stamp', stamp], {
+    const child = spawn(process.execPath, [fileURLToPath(import.meta.url), '--target', target, '--from', String(running ?? '?'), '--log', join(originDir, UPDATE_LOG), '--stamp', stamp, '--verbs', verbs], {
       detached: true, stdio: 'ignore', env,
     });
     child.unref();
@@ -107,10 +124,10 @@ export function spawnUpdater({ target, running, originDir, stateDir, forced = fa
 // ── the runner (a child: `node self-update.mjs --target … --from … --log … --stamp …`) ───────────
 const ptTime = (d = new Date()) => `${d.toLocaleString('en-US', { timeZone: 'America/Los_Angeles', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })} PT`;
 
-function runVerb(argv, timeoutMs) {
-  const r = spawnSync('claude', argv, { encoding: 'utf8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] });
+function runVerb(bin, argv, timeoutMs) {
+  const r = spawnSync(bin, argv, { encoding: 'utf8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] });
   if (r.error && (r.error.code === 'ETIMEDOUT' || r.signal === 'SIGTERM')) return { ok: false, why: 'timeout' };
-  if (r.error) return { ok: false, why: r.error.code === 'ENOENT' ? 'claude not on PATH' : String(r.error.message || r.error.code) };
+  if (r.error) return { ok: false, why: r.error.code === 'ENOENT' ? `${bin} not on PATH` : String(r.error.message || r.error.code) };
   if (r.status === 0) return { ok: true, why: '' };
   const first = String(r.stderr || r.stdout || '').split('\n').map((l) => l.trim()).find((l) => l !== '') ?? `exit ${r.status}`;
   return { ok: false, why: first };
@@ -126,9 +143,12 @@ function runnerMain(argv) {
   if (!target || !log) return;
   const timeoutMs = Number(process.env.PATHSAYER_UPDATE_TIMEOUT_MS) > 0 ? Number(process.env.PATHSAYER_UPDATE_TIMEOUT_MS) : DEFAULT_TIMEOUT_MS;
   const line = (s) => { try { appendFileSync(log, `${ptTime()} ${from} → ${target} ${s}\n`); } catch { /* nowhere to write */ } };
-  const m = runVerb(['plugin', 'marketplace', 'update', MARKETPLACE], timeoutMs);
+  // 2026-09-21 — the harness's OWN verbs (`--verbs codex` for a Codex fire); `claude` is the default
+  const bin = argOf(argv, '--verbs') === 'codex' ? 'codex' : 'claude';
+  const v = VERBS[bin];
+  const m = runVerb(bin, v.marketplace, timeoutMs);
   line(m.ok ? 'marketplace ok' : `marketplace fail(${m.why})`);
-  const u = runVerb(['plugin', 'update', PLUGIN, '-y', '--json'], timeoutMs);
+  const u = runVerb(bin, v.update, timeoutMs);
   line(u.ok ? 'update ok' : `update fail(${u.why})`);
   if (stamp) { try { writeFileSync(stamp, JSON.stringify({ at: Date.now(), outcome: u.ok ? 'ok' : 'fail', from })); } catch { /* best-effort */ } }
 }

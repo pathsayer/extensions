@@ -26,9 +26,9 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { resolveOrigin, peekBearer, heldSecrets, detectHarness } from './lib/hookauth.mjs';
+import { resolveOrigin, peekBearer, heldSecrets, detectHarness, isCodexCloud } from './lib/hookauth.mjs';
 import { maskExactString } from './lib/mask.mjs';
-import { rootOf } from './lib/checkout.mjs';
+import { displayNameOf, rootOf } from './lib/checkout.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -80,7 +80,12 @@ async function main() {
   let harness = detectHarness(process.env, {}).harness;
   // once, and LAZILY — on the first forwarded message, never before `initialize` is answered (its budget
   // is under 100 ms and the root costs a few git calls, O(history) the first time in a repo)
-  let rootMemo; const repoRootOnce = () => (rootMemo === undefined ? (rootMemo = rootOf(process.cwd()) ?? null) : rootMemo);
+  // 2026-09-21 — a directory's PLACE: its root commit, or, when the checkout
+  // withholds its root (a shallow clone), its display name (`org/repo` — from the origin remote, else
+  // FETCH_HEAD, lib/checkout.mjs), which the door resolves by placement on the caller's device. The
+  // display rides ONLY beside `none`: a known root is never second-guessed by a name.
+  const placeOf = (dir) => { const root = rootOf(dir) ?? null; return { root, display: root === null ? (displayNameOf(dir) ?? null) : null }; };
+  let placeMemo; const repoPlaceOnce = () => (placeMemo === undefined ? (placeMemo = placeOf(process.cwd())) : placeMemo);
   // 2026-09-19 — UNDER CODEX this process does NOT run in the session's directory. Codex expands no
   // placeholder in a plugin's MCP entry, so its entry (build.mjs CODEX_MCP_SERVER) starts the proxy
   // with `cwd` = the PLUGIN's folder — which in a cloud box can sit inside a clone of the marketplace
@@ -91,16 +96,17 @@ async function main() {
   // THAT CALL's directory, per call; with none — a call made through the app-server directly carries
   // none — it is `none`, and the server asks for a `space_id`. It never reads process.cwd() here.
   let codex = false;
-  const codexRoots = new Map(); // directory → root | null, for the life of the process
-  const codexRootOf = (msg) => {
+  const codexPlaces = new Map(); // directory → { root, display }, for the life of the process
+  const NOWHERE = { root: null, display: null };
+  const codexPlaceOf = (msg) => {
     const raw = msg?.params?._meta?.[SANDBOX_STATE]?.sandboxCwd;
-    if (typeof raw !== 'string' || !raw) return null;
+    if (typeof raw !== 'string' || !raw) return NOWHERE;
     let dir = raw;
-    if (raw.startsWith('file:')) { try { dir = fileURLToPath(raw); } catch { return null; } }
-    if (!codexRoots.has(dir)) codexRoots.set(dir, rootOf(dir) ?? null);
-    return codexRoots.get(dir);
+    if (raw.startsWith('file:')) { try { dir = fileURLToPath(raw); } catch { return NOWHERE; } }
+    if (!codexPlaces.has(dir)) codexPlaces.set(dir, placeOf(dir));
+    return codexPlaces.get(dir);
   };
-  const rootFor = (msg) => (codex ? codexRootOf(msg) : repoRootOnce());
+  const placeFor = (msg) => (codex ? codexPlaceOf(msg) : repoPlaceOnce());
   const write = (msg) => process.stdout.write(JSON.stringify(msg) + '\n');
   const errorFor = (id, code, message) => ({ jsonrpc: '2.0', id, error: { code, message } });
 
@@ -108,7 +114,7 @@ async function main() {
   let upstream = null; // { token, sessionId } once established
   let establishing = null; // single-flight
 
-  const headersFor = (tok, sessionId, root) => ({
+  const headersFor = (tok, sessionId, place) => ({
     'content-type': 'application/json',
     accept: 'application/json, text/event-stream',
     ...(tok?.token ? { authorization: `Bearer ${tok.token}` } : {}), // the cloud rung (source remote) sends bare
@@ -121,14 +127,17 @@ async function main() {
     // under a shallow clone, and then it says `none`). The recon ops resolve their space by that
     // repo's PLACEMENT; with no root the server asks for a `space_id` — it never guesses one, since
     // what recon returns becomes part of this session's transcript.
-    'x-pathsayer-repo-root': root ?? 'none', // ALWAYS present from this release on: its presence is how the server tells a current proxy (strict — no fallback) from one that predates it (keeps the looser fallback)
+    'x-pathsayer-repo-root': place.root ?? 'none', // ALWAYS present from this release on: its presence is how the server tells a current proxy (strict — no fallback) from one that predates it (keeps the looser fallback)
+    // 2026-09-21 — beside `none`, the repo's NAME when the checkout has one (a shallow
+    // clone's org/repo): the door resolves it by placement on the caller's own device, or refuses as before
+    ...(place.root === null && place.display ? { 'x-pathsayer-repo-display': place.display } : {}),
   });
 
   /** One upstream POST. Returns { status, messages, sessionId }. */
   async function post(msg, tok, sessionId, timeoutMs) {
     const res = await fetch(`${origin}/local-mcp`, {
       // the mask (2026-09-17): the model's own arguments go out as ONE serialized body, masked; the bearer header never is
-      method: 'POST', headers: headersFor(tok, sessionId, rootFor(msg)), body: maskExactString(JSON.stringify(withoutSandboxState(msg)), heldSecrets({ origin })), signal: AbortSignal.timeout(timeoutMs),
+      method: 'POST', headers: headersFor(tok, sessionId, placeFor(msg)), body: maskExactString(JSON.stringify(withoutSandboxState(msg)), heldSecrets({ origin })), signal: AbortSignal.timeout(timeoutMs),
     });
     const sid = res.headers.get('mcp-session-id') ?? sessionId ?? null;
     const type = res.headers.get('content-type') ?? '';
@@ -165,7 +174,9 @@ async function main() {
       clientInit = msg.params ?? null;
       upstream = null; // a new client conversation — the upstream is told on the first real message
       codex = msg.params?.clientInfo?.name === CODEX_CLIENT;
-      if (codex && !harness) harness = 'codex'; // an explicit PATHSAYER_HARNESS (forwarded by the Codex entry) still wins
+      // an explicit PATHSAYER_HARNESS (forwarded by the Codex entry) still wins; else Codex — and Codex
+      // Cloud when the entry forwarded the cloud's originator (2026-09-21)
+      if (codex && !harness) harness = isCodexCloud(process.env) ? 'codex-cloud' : 'codex';
       write({ jsonrpc: '2.0', id: msg.id, result: {
         protocolVersion: msg.params?.protocolVersion ?? DEFAULT_INIT.protocolVersion,
         capabilities: { tools: { listChanged: false }, resources: { subscribe: false, listChanged: false }, ...(codex ? { experimental: { [SANDBOX_STATE]: {} } } : {}) },

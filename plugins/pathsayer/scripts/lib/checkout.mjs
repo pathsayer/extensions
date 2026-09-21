@@ -64,18 +64,36 @@ export function rootOf(cwd) {
   return rootStateOf(cwd).root;
 }
 
+/** `org/repo` from a remote URL — scp-style `git@host:org/repo` normalized, `.git` dropped, a
+ *  credential (`https://user:tok@host/…`) never part of the name — or null when the URL has no
+ *  two path segments. */
+function orgRepoOf(url) {
+  const norm = url.trim().replace(/^[a-z][a-z0-9+.-]*:\/\/[^/@]*@/i, (m) => m.replace(/\/\/[^/@]*@/, '//')).replace(/\.git$/, '').replace(/:/g, '/');
+  const segs = norm.split('/').filter(Boolean);
+  return segs.length >= 2 ? `${segs[segs.length - 2]}/${segs[segs.length - 1]}`.slice(0, 256) : null;
+}
+
 /** The repo's display name, the tray's rule (crawler resolver.rs `repo_display_name`): `org/repo`
- *  parsed from the origin remote — scp-style `git@host:org/repo` normalized, `.git` dropped —
- *  else the checkout's basename. Null only when `dir` is not a repo at all. Never throws. */
+ *  parsed from the origin remote; else — 2026-09-21, the cloud clone's name — from the URL in
+ *  `.git/FETCH_HEAD`, the one place a cloud clone keeps its name (a Codex cloud task's clone is
+ *  shallow with NO remote: `git remote` empty, no [remote] in .git/config, and FETCH_HEAD reads
+ *  `<sha>\t\tbranch 'main' of https://github.com/pathsayer/code` — measured 2026-09-19..21); else
+ *  the checkout's basename. FETCH_HEAD is read ONLY when there is no origin remote, so a laptop
+ *  checkout keeps its remote's name. Null only when `dir` is not a repo at all. Never throws. */
 export function displayNameOf(dir) {
   const top = toplevelOf(dir);
   if (top === null) return null;
   try {
-    const url = git(dir, ['remote', 'get-url', 'origin']).trim();
-    const norm = url.replace(/\.git$/, '').replace(/:/g, '/');
-    const segs = norm.split('/').filter(Boolean);
-    if (segs.length >= 2) return `${segs[segs.length - 2]}/${segs[segs.length - 1]}`.slice(0, 256);
+    const name = orgRepoOf(git(dir, ['remote', 'get-url', 'origin']));
+    if (name !== null) return name;
   } catch { /* no remote */ }
+  try {
+    const gitDir = git(dir, ['rev-parse', '--path-format=absolute', '--git-dir']).trim();
+    const first = readFileSync(join(gitDir, 'FETCH_HEAD'), 'utf8').split('\n')[0] ?? '';
+    const m = /\bof\s+(\S+)\s*$/.exec(first); // `<sha>\t\tbranch 'main' of <url>`
+    const name = m ? orgRepoOf(m[1]) : null;
+    if (name !== null) return name;
+  } catch { /* no FETCH_HEAD */ }
   const base = top.split(/[\\/]/).filter(Boolean).pop();
   return base ? base.slice(0, 256) : null;
 }

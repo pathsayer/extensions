@@ -125,7 +125,7 @@ default package-manager list kept, `pathsayer.com` in Allowed domains, and ONE l
 which the modal shows with your token already in it:
 
 ```sh
-curl -fsSL https://pathsayer.com/install/claude-code-web | PATHSAYER_TOKEN=<token> sh
+curl -fsSL https://pathsayer.com/install/claude-code-cloud | PATHSAYER_TOKEN=<token> sh
 ```
 
 The hosted script (readable at that URL) installs and updates the plugin and writes the token to the

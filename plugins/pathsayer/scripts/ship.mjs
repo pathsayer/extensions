@@ -31,10 +31,10 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
-import { join, dirname, relative } from 'node:path';
+import { join, dirname, basename, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { resolveOrigin, peekBearer, heldSecrets, detectHarness, isRemoteHarness } from './lib/hookauth.mjs';
+import { resolveOrigin, peekBearer, heldSecrets, detectHarness, isRemoteHarness, isCodexCloud } from './lib/hookauth.mjs';
 import { displayNameOf, rootStateOf, toplevelOf } from './lib/checkout.mjs';
 import { maskExact } from './lib/mask.mjs';
 
@@ -50,6 +50,10 @@ const MAX_CHUNK_BYTES = 4 * 1024 * 1024;
  *  THIS VALUE SHIPS AFTER THE SERVER, never before: a server without R10's frozen id recipe would
  *  read the new name as a new substream and fork the person's repo off its history. */
 const CLOUD_HARNESS = 'claude-code-cloud';
+/** 2026-09-21 — Codex's cloud environments are their own harness beside it (the originator's value
+ *  says so — lib/hookauth.mjs isCodexCloud). Their transcripts are Codex rollouts under
+ *  `$CODEX_HOME/sessions`, discovered and named by the tray's own Codex rules (below). */
+const CODEX_CLOUD_HARNESS = 'codex-cloud';
 /** The tray reads a transcript's cwd from its HEAD only (crawler projects.rs read_head_cwd). */
 const HEAD_BYTES = 64 * 1024;
 const MAX_ROUNDS = 4; // declare → ship → confirm (a resync re-declares once more)
@@ -114,6 +118,46 @@ function anchorFor(cwd) {
   return { anchor: { type: 'folder', key: `folder:${cwd}` }, rootKnown: true };
 }
 
+// ── Codex rollouts (2026-09-21) — the tray's rules for Codex (crawler scan.rs), mirrored ──────────
+/** Every `rollout-*.jsonl` under `$CODEX_HOME/sessions` (a date tree: YYYY/MM/DD). ONLY rollout
+ *  files — Codex writes other jsonl into its home — and never a `.zst` (a rotated rollout is
+ *  compressed bytes, not a transcript; a missing session is visible, garbage in the chunk log is not). */
+function findRollouts(dir, out = []) {
+  let entries;
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const e of entries) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) findRollouts(p, out);
+    else if (e.isFile() && e.name.startsWith('rollout-') && e.name.endsWith('.jsonl')) out.push(p);
+  }
+  return out;
+}
+
+/** The session uuid past `rollout-<YYYY-MM-DDThh-mm-ss>-` (the tray's Q9 rule: the uuid is what
+ *  Codex itself declares as identity); a stem off the shape is null and the file is SKIPPED. */
+function codexSessionUuid(stem) {
+  if (!stem.startsWith('rollout-')) return null;
+  const rest = stem.slice('rollout-'.length);
+  if (rest.length < 21 || rest[10] !== 'T' || rest[19] !== '-') return null;
+  return rest.slice(20);
+}
+
+/** The identity of a rollout: `<uuid>`, or `<parent>/subagents/codex-<uuid>` for a CHILD (line 1's
+ *  `session_meta.parent_thread_id` — a spawned agent or an internal judge), path-qualified exactly like
+ *  Claude's children so every downstream rule applies; the slug is the date dir (descriptive only —
+ *  Codex has no cwd-slug to carry). Null when the stem is off the shape. */
+function codexIdentityOf(sessionsDir, file, buf) {
+  const uuid = codexSessionUuid(basename(file).replace(/\.jsonl$/, ''));
+  if (uuid === null) return null;
+  let id = uuid;
+  try {
+    const first = buf.subarray(0, Math.min(buf.length, HEAD_BYTES)).toString('utf8').split('\n')[0] ?? '';
+    const parent = JSON.parse(first)?.payload?.parent_thread_id;
+    if (typeof parent === 'string' && parent !== '') id = `${parent}/subagents/codex-${uuid}`;
+  } catch { /* an unreadable head is a top-level session, visibly */ }
+  return { id, slug: relative(sessionsDir, dirname(file)).replace(/\\/g, '/') };
+}
+
 /** The tray's identity for a transcript (crawler scan.rs, the 06-12 rule): the path under the PROJECT
  *  dir with the slug (the first segment) stripped, no extension, `/`-separated — so a subagent is
  *  `<parent>/subagents/…/agent-<id>` and rides its parent's substream downstream. The slug is the
@@ -148,15 +192,18 @@ async function post(url, headers, body, kind) {
 }
 
 export async function ship(payload, env = process.env) {
-  // ── the surface gate: a remote harness (or the laptop proof's pin), the claude-code harness
-  if (!isRemoteHarness(env) && env.PATHSAYER_SHIP !== '1') return { outcome: 'skip_local_capture' };
+  // ── the surface gate: a remote harness — Claude Code Cloud, or (2026-09-21) a Codex cloud
+  //    environment — or the laptop proof's pin; a laptop ships nothing (the tray captures there)
+  const codexCloud = isCodexCloud(env);
+  if (!isRemoteHarness(env) && !codexCloud && env.PATHSAYER_SHIP !== '1') return { outcome: 'skip_local_capture' };
   // the remote surface IS Claude Code Cloud: CLAUDE_CODE_REMOTE alone (the doc's name) carries
   // no entrypoint for detectHarness to read, so remote + unknown reads as claude-code here
   // what ships is always the web harness — its sessions are their own substream per repo; a laptop
   // proof (PATHSAYER_SHIP=1 under `cli`) ships as the web too, since that is what it stands in for
   const d = detectHarness(env, payload);
-  const harness = d.harness ?? (isRemoteHarness(env) ? CLOUD_HARNESS : null);
-  if (harness !== CLOUD_HARNESS && harness !== 'claude-code') return { outcome: 'skip_harness', harness: d.harness };
+  const harness = codexCloud ? CODEX_CLOUD_HARNESS : (d.harness ?? (isRemoteHarness(env) ? CLOUD_HARNESS : null));
+  if (harness !== CLOUD_HARNESS && harness !== CODEX_CLOUD_HARNESS && harness !== 'claude-code') return { outcome: 'skip_harness', harness: d.harness };
+  const shipAs = harness === CODEX_CLOUD_HARNESS ? CODEX_CLOUD_HARNESS : CLOUD_HARNESS;
 
   // ── the credential by the ladder (the tray's file · PATHSAYER_TOKEN · the cache · the cloud's
   //    bare send, where the environment's own proxy attaches it)
@@ -169,10 +216,13 @@ export async function ship(payload, env = process.env) {
   }
   const authHeaders = bearer.token ? { authorization: `Bearer ${bearer.token}` } : {};
 
-  // ── the transcripts
+  // ── the transcripts: Claude Code's projects tree, or Codex's sessions tree ($CODEX_HOME — the
+  //    cloud runs the agent with CODEX_HOME=/opt/codex; a laptop's default is ~/.codex)
   const home = env.HOME || '/root';
-  const projectsDir = env.PATHSAYER_PROJECTS_DIR || join(home, '.claude', 'projects');
-  const files = findTranscripts(projectsDir);
+  const projectsDir = codexCloud
+    ? (env.PATHSAYER_CODEX_SESSIONS_DIR || join(env.CODEX_HOME || join(home, '.codex'), 'sessions'))
+    : (env.PATHSAYER_PROJECTS_DIR || join(home, '.claude', 'projects'));
+  const files = codexCloud ? findRollouts(projectsDir) : findTranscripts(projectsDir);
   const payloadCwd = typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd();
   // each session anchors on ITS OWN head cwd (the tray's rule); the payload's cwd is the fallback
   // for a head that names none. One git resolution per distinct cwd.
@@ -192,7 +242,9 @@ export async function ship(payload, env = process.env) {
     try { buf = maskExact(readFileSync(f), secrets); } catch { continue; }
     const eof = alignedEof(buf);
     if (eof === 0) continue; // no complete line yet — hold
-    const { id, slug } = identityOf(projectsDir, f);
+    const ident = codexCloud ? codexIdentityOf(projectsDir, f, buf) : identityOf(projectsDir, f);
+    if (ident === null) continue; // a rollout whose stem is off the shape — skipped, visibly (the tray's rule)
+    const { id, slug } = ident;
     if (!id) continue;
     const place = placeOf(headCwdOf(buf) ?? payloadCwd);
     // origin 0: the server owns a session's origin (a head rewritten before the first ship); the
@@ -218,7 +270,7 @@ export async function ship(payload, env = process.env) {
         protocol_version: RECONCILE_PROTOCOL_FACTS,
         device_id: 'cloud', // the schema wants a name; the door scopes the device from the token, never this
         account_id: '',
-        declarations: sessions.map((s) => ({ session_id: s.id, harness: CLOUD_HARNESS, anchor: s.anchor, byte_hwm: s.eof, generation: s.gen, prefix_sha: prefixSha(s.buf), origin_byte: s.origin, ...(s.rootKnown === false ? { root_known: false } : {}) })),
+        declarations: sessions.map((s) => ({ session_id: s.id, harness: shipAs, anchor: s.anchor, byte_hwm: s.eof, generation: s.gen, prefix_sha: prefixSha(s.buf), origin_byte: s.origin, ...(s.rootKnown === false ? { root_known: false } : {}) })),
         full: false,
       }), 'POST');
     } catch (e) {
@@ -281,7 +333,7 @@ export async function ship(payload, env = process.env) {
         const envelope = {
           protocol_version: PROTOCOL_VERSION,
           client_version: `${version}-cloud`,
-          harness: CLOUD_HARNESS,
+          harness: shipAs,
           session_id: s.id,
           slug: s.slug || s.id,
           anchor: s.anchor,

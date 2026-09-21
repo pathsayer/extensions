@@ -12,7 +12,12 @@
         "PATHSAYER_ORIGIN",
         "PATHSAYER_BASE",
         "PATHSAYER_HOOK_STATE",
-        "PATHSAYER_HARNESS"
+        "PATHSAYER_HARNESS",
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "NO_PROXY",
+        "NODE_EXTRA_CA_CERTS",
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE"
       ]
     }
   }
