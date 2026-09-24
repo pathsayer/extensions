@@ -60,13 +60,17 @@ environment, once, in its settings:
    claude plugin install pathsayer@pathsayer
    claude plugin update pathsayer@pathsayer
    ```
-   It runs before Claude Code starts, so the plugin is live at boot. The
-   `update` line refreshes an install a VM image may already carry — once, on
-   the day the environment is made: the script re-runs only when it is edited.
-   From 1.0.20260916.2 the plugin updates itself from inside a session, so a
-   later release reaches an environment on its own. An environment still holding
-   an older build crosses over once by hand: `claude plugin update
-   pathsayer@pathsayer` in any session (or edit the setup script).
+   It runs before Claude Code starts, so the plugin is live at boot — once: the
+   environment's filesystem is snapshotted after the script's first run and every
+   later session starts from that snapshot, so the build the snapshot holds is
+   the build every session's FIRST prompt runs on. From 1.0.20260916.2 the plugin
+   updates itself from inside a session, but that update lands in the session's
+   own clone of the snapshot, never in the snapshot — the next session's first
+   prompt is on the old build again. The snapshot is rebuilt, and the script
+   re-run, when the environment's setup script, allowed network hosts, or
+   environment variables CHANGE (a change of bytes — saving the same text does
+   nothing), and on its own after roughly seven days. To move an environment to
+   a newer build now, change any of those (a comment line, a variable) once.
 
 Every session in that environment then installs and arms itself; the recon hooks
 serve there like anywhere else, and once the environment holds a token (see
