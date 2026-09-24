@@ -482,4 +482,4 @@ provenance for writes.
 
 ---
 
-*recon skill v1.0.20260923.4*
+*recon skill v1.0.20260923.5*

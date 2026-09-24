@@ -55,7 +55,7 @@ export function originDir({ origin }) {
   return dir;
 }
 
-/** A SESSION's dir under its origin: the ticket (one mint attempt) and the epoch live here. */
+/** A SESSION's dir under its origin: the ticket (one mint run) and the epoch live here. */
 export function stateDir({ origin, sessionId }) {
   const dir = join(originDir({ origin }), String(sessionId).replace(/[^\w.-]/g, '_'));
   mkdirSync(dir, { recursive: true });

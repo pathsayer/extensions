@@ -60,9 +60,9 @@ import { pluginSuffix, stampNoticed } from './lib/registered.mjs';
 // stderr line for a harness or root that cannot update itself
 import { decideUpdate, spawnUpdater } from './lib/self-update.mjs';
 import { originDir as hookOriginDir, stateDir as hookStateDir } from './lib/hookauth.mjs';
-// 2026-09-23 — a session in a constellation ATTEMPT: the start ref at SessionStart, the handshake
-// and the task card (and a predecessor's bundle) on the first prompt (lib/attempt.mjs)
-import { applyBundle, attemptHarnessOf, attemptLineOf, fetchBundle, handshake, loadAttempt, renderTask, saveAttempt, startRefOf } from './lib/attempt.mjs';
+// 2026-09-23 — a session in a constellation RUN: the start ref at SessionStart, the handshake
+// and the task card (and a predecessor's bundle) on the first prompt (lib/task-run.mjs)
+import { applyBundle, taskRunHarnessOf, taskRunLineOf, fetchBundle, handshake, loadTaskRun, renderTask, saveTaskRun, startRefOf } from './lib/task-run.mjs';
 
 /** The shallow-clone rule (2026-09-16) — the repo fields a fire sends for a cwd: the root when the
  *  checkout knows it; under a SHALLOW clone (the root would have been the depth boundary, and the
@@ -359,44 +359,44 @@ async function readStdin() {
 }
 
 /** SessionStart (2026-09-23): record the ref this checkout started from, once per session, so a
- *  later attempt's bundle has its base — FETCH_HEAD in a cloud clone, the reflog's first entry in
- *  a worktree. Every session pays one `rev-parse`; a session that never binds an attempt never
+ *  later run's bundle has its base — FETCH_HEAD in a cloud clone, the reflog's first entry in
+ *  a worktree. Every session pays one `rev-parse`; a session that never binds a run never
  *  reads it again. Never throws. */
 function recordStart(payload, ctx) {
   try {
     const cwd = typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd();
-    if (loadAttempt(ctx)?.start_ref) return;
+    if (loadTaskRun(ctx)?.start_ref) return;
     const ref = startRefOf(cwd);
-    if (ref) saveAttempt(ctx, { start_ref: ref, start_cwd: cwd });
+    if (ref) saveTaskRun(ctx, { start_ref: ref, start_cwd: cwd });
   } catch { /* fail-open */ }
 }
 
-/** The first-prompt hook's attempt half (2026-09-23): match `pathsayer-attempt: <id>` on the RAW
+/** The first-prompt hook's run half (2026-09-23): match `pathsayer-task-run: <id>` on the RAW
  *  prompt's first line, keep it, and present it to the server until the server confirms. Bound →
  *  the task card (and, for a successor, the predecessor's bundle applied first) is the context
  *  this fire adds. Answered stop → one line that says so, and the id is never presented again.
  *  Unreachable → nothing now; the next prompt presents it again. Null when this session names no
- *  attempt, or is already bound — the ordinary fire. Never throws. */
-async function attemptPrompt(payload, ctx) {
+ *  run, or is already bound — the ordinary fire. Never throws. */
+async function taskRunPrompt(payload, ctx) {
   try {
-    const lineId = attemptLineOf(payload.prompt);
-    let st = loadAttempt(ctx);
-    if (lineId && st?.attempt_id !== lineId) st = saveAttempt(ctx, { attempt_id: lineId, bound: false, refused: false });
-    if (!st?.attempt_id || st.bound === true || st.refused === true) return null;
+    const lineId = taskRunLineOf(payload.prompt);
+    let st = loadTaskRun(ctx);
+    if (lineId && st?.task_run_id !== lineId) st = saveTaskRun(ctx, { task_run_id: lineId, bound: false, refused: false });
+    if (!st?.task_run_id || st.bound === true || st.refused === true) return null;
     const tok = await getBearer({ origin: ctx.origin, sessionId: ctx.sessionId });
     if (!tok || (!tok.token && tok.source !== 'remote')) return null;
     const headers = tok.token ? { authorization: `Bearer ${tok.token}` } : {};
-    const harness = attemptHarnessOf(process.env, payload);
+    const harness = taskRunHarnessOf(process.env, payload);
     const cwd = typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd();
-    const r = await handshake({ origin: ctx.origin, headers, attemptId: st.attempt_id, sessionId: ctx.sessionId, cwd, harness });
+    const r = await handshake({ origin: ctx.origin, headers, taskRunId: st.task_run_id, sessionId: ctx.sessionId, cwd, harness });
     if (r.bound !== true) {
       if (r.reason === 'stop') {
-        saveAttempt(ctx, { refused: true });
-        return `Pathsayer: this session is not the attempt it names (${st.attempt_id}). Stop — do no work on it.`;
+        saveTaskRun(ctx, { refused: true });
+        return `Pathsayer: this session is not the run it names (${st.task_run_id}). Stop — do no work on it.`;
       }
       return null; // unreachable or refused: presented again on the next prompt
     }
-    saveAttempt(ctx, { bound: true, harness, cwd, ...(typeof r.wait_s === 'number' ? { wait_s: r.wait_s } : {}) });
+    saveTaskRun(ctx, { bound: true, harness, cwd, ...(typeof r.wait_s === 'number' ? { wait_s: r.wait_s } : {}) });
     const lines = [];
     if (typeof r.bundle_key === 'string' && r.bundle_key) {
       const bytes = await fetchBundle({ origin: ctx.origin, headers, key: r.bundle_key });
@@ -429,15 +429,15 @@ async function main() {
     // asks which build is current and, behind, hands the update to a detached child. Two seconds
     // inside SessionStart's five; nothing on stdout; every other lifecycle fire stays nothing.
     if (ev === 'SessionStart') {
-      recordStart(payload, { origin, sessionId }); // the attempt's base, should this session bind one
+      recordStart(payload, { origin, sessionId }); // the run's base, should this session bind one
       await askRelease(origin, { origin, sessionId, payload });
     }
     return;
   }
   const commit = lane === 'commit';
-  // the attempt card (2026-09-23): the first prompt's handshake, before the recon fire — what it
+  // the run card (2026-09-23): the first prompt's handshake, before the recon fire — what it
   // returns rides this fire's context whether or not the recon serve answers
-  const card = lane === 'prompt' ? await attemptPrompt(payload, { origin, sessionId }) : null;
+  const card = lane === 'prompt' ? await taskRunPrompt(payload, { origin, sessionId }) : null;
   // the commit walk's failure shape is the DIRECTIVE, not silence (a commit is never silently
   // unchecked); every other shape fails to silence — except a card, which is never dropped
   const fallback = () => {
@@ -484,7 +484,7 @@ async function main() {
   // STRIPPED so the stdout envelope stays verbatim (the parity contract below).
   const sidecar = body.pathsayer ?? null;
   if (sidecar) delete body.pathsayer;
-  // the attempt card leads the served context (2026-09-23): the task before the recon
+  // the run card leads the served context (2026-09-23): the task before the recon
   if (card) {
     const served = body.hookSpecificOutput.additionalContext;
     body.hookSpecificOutput.additionalContext = typeof served === 'string' && served.length > 0 ? `${card}\n\n${served}` : card;

@@ -1,11 +1,11 @@
 // 2026-09-23 — the plugin half of the harness-by-place abstraction: what a session in a
-// constellation ATTEMPT does at its hooks, on all four cells (Claude or Codex, cloud or laptop).
+// constellation RUN does at its hooks, on all four cells (Claude or Codex, cloud or laptop).
 // Four operations, one rule each, the per-cell differences as details (measured 2026-09-23 in
 // both cloud environments and in worktrees on a laptop — cells C17, C19, C21, C22):
-//   handshake  the start prompt's first line is `pathsayer-attempt: <id>`; the first-prompt hook
+//   handshake  the start prompt's first line is `pathsayer-task-run: <id>`; the first-prompt hook
 //              matches it on the RAW prompt text (never on anything the model says), keeps the id
 //              in per-session state, and presents it to the server until the server confirms —
-//              the server binds once, while the attempt is starting, from its device.
+//              the server binds once, while the run is starting, from its device.
 //   save       at Stop, before the ask: commit if the tree is dirty (Claude leaves it dirty; Codex
 //              Cloud commits itself before Stop; local Codex does not), `git bundle create` from
 //              the START ref to HEAD, PUT to the bundle endpoint. The start ref is recorded at
@@ -30,9 +30,9 @@ import { dirname, join } from 'node:path';
 
 import { crawlHome, detectHarness, isCodexCloud, isRemoteHarness, stateDir } from './hookauth.mjs';
 
-/** The attempt id's shape — `att_` + 16 hex (like the tray's `dev_`). */
-export const ATTEMPT_ID = /^att_[0-9a-f]{16}$/;
-const ATTEMPT_LINE = /^pathsayer-attempt:\s*(att_[0-9a-f]{16})\s*$/;
+/** The run id's shape — `run_` + 16 hex (like the tray's `dev_`). */
+export const TASK_RUN_ID = /^run_[0-9a-f]{16}$/;
+const TASK_RUN_LINE = /^pathsayer-task-run:\s*(run_[0-9a-f]{16})\s*$/;
 
 /** The identity a commit made by the hook carries when the checkout has none configured. */
 const HOOK_IDENTITY = ['-c', 'user.name=Pathsayer', '-c', 'user.email=hook@pathsayer.com'];
@@ -43,12 +43,12 @@ function run(cwd, args, opts = {}) {
 }
 const errText = (e) => String(e?.stderr ?? e?.message ?? e).trim();
 
-/** The first line of the raw prompt, and only the first line: `pathsayer-attempt: <id>` → the id,
+/** The first line of the raw prompt, and only the first line: `pathsayer-task-run: <id>` → the id,
  *  else null. A mention anywhere else binds nothing. */
-export function attemptLineOf(prompt) {
+export function taskRunLineOf(prompt) {
   if (typeof prompt !== 'string' || prompt === '') return null;
   const first = prompt.split('\n', 1)[0].replace(/\r$/, '');
-  const m = ATTEMPT_LINE.exec(first);
+  const m = TASK_RUN_LINE.exec(first);
   return m ? m[1] : null;
 }
 
@@ -64,41 +64,41 @@ export function startRefOf(cwd) {
   try { return run(cwd, ['rev-parse', '--verify', 'HEAD^{commit}']).trim() || null; } catch { return null; }
 }
 
-const statePath = (ctx) => join(stateDir(ctx), 'attempt.json');
+const statePath = (ctx) => join(stateDir(ctx), 'run.json');
 /** The id a session's prompt named, kept by SESSION alone (the per-origin state above is where
  *  the bind lands): an id matched while the server could not be reached is presented again on
  *  the next prompt, whatever origin that fire resolves. */
 function keptIdPath(sessionId) {
   const root = process.env.PATHSAYER_HOOK_STATE || join(crawlHome(), '.pathsayer', 'hook-state');
-  const dir = join(root, 'attempt-ids');
+  const dir = join(root, 'task-run-ids');
   mkdirSync(dir, { recursive: true });
   return join(dir, String(sessionId).replace(/[^\w.-]/g, '_'));
 }
 
-/** The session's attempt state (`attempt.json` under hookauth.stateDir), or null. A state that
- *  names no attempt takes the session's kept id, unbound, when one was matched. */
-export function loadAttempt(ctx) {
+/** The session's run state (`run.json` under hookauth.stateDir), or null. A state that
+ *  names no run takes the session's kept id, unbound, when one was matched. */
+export function loadTaskRun(ctx) {
   let st = null;
   try { st = JSON.parse(readFileSync(statePath(ctx), 'utf8')); } catch { st = null; }
-  if (st?.attempt_id) return st;
+  if (st?.task_run_id) return st;
   let kept = null;
   try { kept = readFileSync(keptIdPath(ctx.sessionId), 'utf8').trim(); } catch { kept = null; }
-  if (!kept || !ATTEMPT_ID.test(kept)) return st;
-  return { ...(st ?? {}), attempt_id: kept, bound: false, refused: false };
+  if (!kept || !TASK_RUN_ID.test(kept)) return st;
+  return { ...(st ?? {}), task_run_id: kept, bound: false, refused: false };
 }
 
-/** Merge `patch` into the session's attempt state and return the whole. A patch that names the
- *  attempt also keeps the id by session. */
-export function saveAttempt(ctx, patch) {
-  const next = { ...(loadAttempt(ctx) ?? {}), ...patch };
+/** Merge `patch` into the session's run state and return the whole. A patch that names the
+ *  run also keeps the id by session. */
+export function saveTaskRun(ctx, patch) {
+  const next = { ...(loadTaskRun(ctx) ?? {}), ...patch };
   writeFileSync(statePath(ctx), JSON.stringify(next), { mode: 0o600 });
-  if (typeof patch.attempt_id === 'string') { try { writeFileSync(keptIdPath(ctx.sessionId), patch.attempt_id, { mode: 0o600 }); } catch { /* best-effort */ } }
+  if (typeof patch.task_run_id === 'string') { try { writeFileSync(keptIdPath(ctx.sessionId), patch.task_run_id, { mode: 0o600 }); } catch { /* best-effort */ } }
   return next;
 }
 
 /** The harness a session ships as — the courier's rule: the two cloud environments are their own
  *  harnesses; a laptop ships as the harness that fired. Null when unknown (never guessed). */
-export function attemptHarnessOf(env, payload) {
+export function taskRunHarnessOf(env, payload) {
   if (isCodexCloud(env)) return 'codex-cloud';
   const { harness } = detectHarness(env, payload);
   if (isRemoteHarness(env)) return harness === 'codex' ? 'codex-cloud' : 'claude-code-cloud';
@@ -120,7 +120,7 @@ export function save({ cwd, base, lastHead, message }) {
   const head = run(cwd, ['rev-parse', 'HEAD']).trim();
   if (head === base || head === lastHead) return { head, committed, bytes: null };
   const dir = mkdtempSync(join(tmpdir(), 'ps-bundle-'));
-  const file = join(dir, 'attempt.bundle');
+  const file = join(dir, 'run.bundle');
   try {
     run(cwd, ['bundle', 'create', '-q', file, base ? `${base}..HEAD` : 'HEAD']);
     return { head, committed, bytes: readFileSync(file) };
@@ -152,7 +152,7 @@ export function renderTask(task) {
   const lines = [`Pathsayer task ${task.id}:`, '', String(task.text ?? '').trim(), ''];
   const log = Array.isArray(task.log) ? task.log : [];
   if (log.length > 0) {
-    lines.push('Log (written by Pathsayer; the earlier attempts and their stops):');
+    lines.push('Log (written by Pathsayer; the earlier runs and their stops):');
     for (const e of log) lines.push(`- [${e.kind ?? 'note'}${e.at ? ' ' + e.at : ''}] ${String(e.text ?? '').trim()}`);
     lines.push('');
   }
@@ -163,15 +163,15 @@ export function renderTask(task) {
 const jsonHeaders = (headers) => ({ ...headers, 'content-type': 'application/json', connection: 'close' });
 const drain = (res) => res.text().catch(() => '');
 
-/** The handshake: POST /local-ingest/attempt/handshake. Resolves to the server's answer
+/** The handshake: POST /local-ingest/task-run/handshake. Resolves to the server's answer
  *  (`{ bound, card?, wait_s?, bundle_key?, reason? }`) or `{ bound: false, reason }` — `unreachable`
  *  for a transport failure, `http_<status>` for a refusal. */
-export async function handshake({ origin, headers, attemptId, sessionId, cwd, harness, fetchImpl = fetch, timeoutMs = 8000 }) {
+export async function handshake({ origin, headers, taskRunId, sessionId, cwd, harness, fetchImpl = fetch, timeoutMs = 8000 }) {
   try {
-    const res = await fetchImpl(`${origin}/local-ingest/attempt/handshake`, {
+    const res = await fetchImpl(`${origin}/local-ingest/task-run/handshake`, {
       method: 'POST',
       headers: jsonHeaders(headers),
-      body: JSON.stringify({ attempt_id: attemptId, session_id: sessionId, cwd, harness }),
+      body: JSON.stringify({ task_run_id: taskRunId, session_id: sessionId, cwd, harness }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) { await drain(res); return { bound: false, reason: `http_${res.status}` }; }
@@ -190,15 +190,15 @@ export async function fetchBundle({ origin, headers, key, fetchImpl = fetch, tim
   } catch { return null; }
 }
 
-/** The stop ask: POST /local-ingest/attempt/stop in short asks until a task or the budget is
+/** The stop ask: POST /local-ingest/task-run/stop in short asks until a task or the budget is
  *  spent; the first answer's `wait_s` sets the budget. Resolves to `{ task, wait_s }` or null —
  *  after one final ask marked `ending: true` when the server answered and had nothing (the moment
  *  it marks the session finished; `report.ending` says the final ask was made), or at once when
  *  the door refused or could not be reached (fail-open; the next stop asks again). */
-export async function stopAsk({ origin, headers, attemptId, sessionId, lastMessage, transcriptBytes, bundleError, budgetS = 540, maxWaitS = null, intervalMs = 10_000, fetchImpl = fetch, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), timeoutMs = 20_000, report = {} }) {
+export async function stopAsk({ origin, headers, taskRunId, sessionId, lastMessage, transcriptBytes, bundleError, budgetS = 540, maxWaitS = null, intervalMs = 10_000, fetchImpl = fetch, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), timeoutMs = 20_000, report = {} }) {
   const started = Date.now();
   // `maxWaitS` (2026-09-23): a CAP on the wait, over the server's number — the rig's seam
-  // (PATHSAYER_ATTEMPT_MAX_WAIT_S in ship.mjs) so a run against a real server ends in seconds; never
+  // (PATHSAYER_TASK_RUN_MAX_WAIT_S in ship.mjs) so a run against a real server ends in seconds; never
   // set by a member's environment, where the server's number is the wait.
   const cap = (ms) => (typeof maxWaitS === 'number' && Number.isFinite(maxWaitS) ? Math.min(ms, Math.max(0, maxWaitS) * 1000) : ms);
   let budgetMs = cap(budgetS * 1000);
@@ -206,10 +206,10 @@ export async function stopAsk({ origin, headers, attemptId, sessionId, lastMessa
   const post = async (extra) => {
     asked += 1;
     try {
-      const res = await fetchImpl(`${origin}/local-ingest/attempt/stop`, {
+      const res = await fetchImpl(`${origin}/local-ingest/task-run/stop`, {
         method: 'POST',
         headers: jsonHeaders(headers),
-        body: JSON.stringify({ attempt_id: attemptId, session_id: sessionId, last_message: lastMessage ?? null, transcript_bytes: transcriptBytes ?? null, asked, ...(bundleError ? { bundle_error: bundleError } : {}), ...extra }),
+        body: JSON.stringify({ task_run_id: taskRunId, session_id: sessionId, last_message: lastMessage ?? null, transcript_bytes: transcriptBytes ?? null, asked, ...(bundleError ? { bundle_error: bundleError } : {}), ...extra }),
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (!res.ok) { await drain(res); return null; }
@@ -219,10 +219,10 @@ export async function stopAsk({ origin, headers, attemptId, sessionId, lastMessa
   for (let first = true; ; first = false) {
     const a = await post({});
     if (a === null) return null;
-    if (a.task && typeof a.task === 'object') return { task: a.task, wait_s: a.wait_s, ...(typeof a.attempt_id === 'string' ? { attempt_id: a.attempt_id } : {}) }; // the NEW attempt the task runs as (R9) — the caller adopts it
+    if (a.task && typeof a.task === 'object') return { task: a.task, wait_s: a.wait_s, ...(typeof a.task_run_id === 'string' ? { task_run_id: a.task_run_id } : {}) }; // the NEW run the task runs as (R9) — the caller adopts it
     if (first && typeof a.wait_s === 'number' && Number.isFinite(a.wait_s)) budgetMs = cap(Math.max(0, a.wait_s) * 1000);
-    // the server does not know this session as the attempt's: nothing to wait for and nothing to end
-    // — no ending ask, and the caller never marks the attempt finished (the state stays live for the
+    // the server does not know this session as the run's: nothing to wait for and nothing to end
+    // — no ending ask, and the caller never marks the run finished (the state stays live for the
     // next stop, which presents whatever the server last bound)
     if (a.unbound === true) { report.unbound = true; return null; }
     if (Date.now() - started + intervalMs > budgetMs) break;
@@ -258,7 +258,7 @@ export function lastMessageFromTranscript(path) {
   return null;
 }
 
-/** Where a laptop attempt's transcript tree starts, from the transcript's own path: Claude's
+/** Where a laptop run's transcript tree starts, from the transcript's own path: Claude's
  *  `projects/<slug>/<id>.jsonl` → `projects`; Codex's `sessions/YYYY/MM/DD/rollout-…` → `sessions`. */
 export function treeRootOf(transcriptPath, codex) {
   let d = dirname(transcriptPath);
