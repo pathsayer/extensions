@@ -28,7 +28,7 @@
 //   never blocks the harness: every outcome is exit 0; every failure is one stderr line. A 401
 //   says the token was refused (the device was removed on Home, or the token is wrong) and drops
 //   NOTHING — the credential is the environment's, not this script's.
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { join, dirname, basename, relative } from 'node:path';
@@ -37,6 +37,12 @@ import { fileURLToPath } from 'node:url';
 import { resolveOrigin, peekBearer, heldSecrets, detectHarness, isRemoteHarness, isCodexCloud } from './lib/hookauth.mjs';
 import { displayNameOf, rootStateOf, toplevelOf } from './lib/checkout.mjs';
 import { maskExact } from './lib/mask.mjs';
+// 2026-09-23 — a session in a constellation ATTEMPT: the Stop hook is ONE script, this one, grown
+// (Claude runs every hook for an event at once, so "save, then ask" as two entries would have no
+// order): the save (commit if dirty, bundle from the start ref, PUT), the transcript delta — on a
+// laptop too, for a bound attempt session only — then the stop ask, whose task becomes the block
+// answer on stdout. Outside an attempt this script does exactly what it did.
+import { loadAttempt, saveAttempt, save, stopAsk, renderTask, lastMessageFromTranscript, treeRootOf } from './lib/attempt.mjs';
 
 const PROTOCOL_VERSION = 2;
 const RECONCILE_PROTOCOL_FACTS = 4;
@@ -192,22 +198,34 @@ async function post(url, headers, body, kind) {
 }
 
 export async function ship(payload, env = process.env) {
+  const origin = resolveOrigin({ baked: await bakedOrigin() });
+  // ── an ATTEMPT session (2026-09-23): bound to a constellation attempt by its first prompt and
+  //    not yet finished. Its Stop saves, ships and asks; its SessionEnd ships the tail. The
+  //    per-session state is the hook's own (lib/attempt.mjs); nothing here reads the harness's flags.
+  const sessionId = typeof payload.session_id === 'string' && payload.session_id ? payload.session_id : null;
+  const att = sessionId ? loadAttempt({ origin, sessionId }) : null;
+  const attemptLive = att !== null && att.bound === true && att.finished !== true && (payload.hook_event_name === 'Stop' || payload.hook_event_name === 'SessionEnd');
   // ── the surface gate: a remote harness — Claude Code Cloud, or (2026-09-21) a Codex cloud
-  //    environment — or the laptop proof's pin; a laptop ships nothing (the tray captures there)
+  //    environment — or the laptop proof's pin; a laptop ships nothing (the tray captures there) —
+  //    except an attempt session, whose hook owns its shipment on every cell (2026-09-23)
   const codexCloud = isCodexCloud(env);
-  if (!isRemoteHarness(env) && !codexCloud && env.PATHSAYER_SHIP !== '1') return { outcome: 'skip_local_capture' };
+  const remote = isRemoteHarness(env);
+  if (!remote && !codexCloud && env.PATHSAYER_SHIP !== '1' && !attemptLive) return { outcome: 'skip_local_capture' };
   // the remote surface IS Claude Code Cloud: CLAUDE_CODE_REMOTE alone (the doc's name) carries
   // no entrypoint for detectHarness to read, so remote + unknown reads as claude-code here
   // what ships is always the web harness — its sessions are their own substream per repo; a laptop
-  // proof (PATHSAYER_SHIP=1 under `cli`) ships as the web too, since that is what it stands in for
+  // proof (PATHSAYER_SHIP=1 under `cli`) ships as the web too, since that is what it stands in for.
+  // A laptop ATTEMPT session ships as the harness that fired (claude-code · codex): it is a laptop
+  // session, captured by its hook instead of the tray.
   const d = detectHarness(env, payload);
-  const harness = codexCloud ? CODEX_CLOUD_HARNESS : (d.harness ?? (isRemoteHarness(env) ? CLOUD_HARNESS : null));
-  if (harness !== CLOUD_HARNESS && harness !== CODEX_CLOUD_HARNESS && harness !== 'claude-code') return { outcome: 'skip_harness', harness: d.harness };
-  const shipAs = harness === CODEX_CLOUD_HARNESS ? CODEX_CLOUD_HARNESS : CLOUD_HARNESS;
+  const harness = codexCloud ? CODEX_CLOUD_HARNESS : (d.harness ?? (remote ? CLOUD_HARNESS : null));
+  const laptopAttempt = attemptLive && !remote && !codexCloud;
+  if (harness !== CLOUD_HARNESS && harness !== CODEX_CLOUD_HARNESS && harness !== 'claude-code' && !(laptopAttempt && harness === 'codex')) return { outcome: 'skip_harness', harness: d.harness };
+  const shipAs = laptopAttempt ? harness : harness === CODEX_CLOUD_HARNESS ? CODEX_CLOUD_HARNESS : CLOUD_HARNESS;
+  const codex = codexCloud || (laptopAttempt && harness === 'codex'); // Codex's rollout tree, not Claude's projects tree
 
   // ── the credential by the ladder (the tray's file · PATHSAYER_TOKEN · the cache · the cloud's
   //    bare send, where the environment's own proxy attaches it)
-  const origin = resolveOrigin({ baked: await bakedOrigin() });
   const bearer = peekBearer({ origin });
   if (bearer === null) {
     // the shallow-clone rule (R5) — every outcome says one line: silence was how a whole environment shipped nothing
@@ -216,13 +234,45 @@ export async function ship(payload, env = process.env) {
   }
   const authHeaders = bearer.token ? { authorization: `Bearer ${bearer.token}` } : {};
 
+  // ── the attempt's SAVE (2026-09-23), before anything ships: commit if dirty, bundle from the
+  //    start ref recorded at SessionStart, PUT to the bundle door with the same credential. A
+  //    failure is reported on the attempt (it rides the stop ask), never swallowed.
+  const attempt = attemptLive ? { attempt_id: att.attempt_id } : null;
+  if (attemptLive && payload.hook_event_name === 'Stop') {
+    const cwd = typeof att.cwd === 'string' && att.cwd ? att.cwd : (typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd());
+    try {
+      const s = save({ cwd, base: att.start_ref ?? null, lastHead: att.last_upload_head ?? null, message: `Pathsayer: work at stop (attempt ${att.attempt_id})` });
+      attempt.head = s.head; attempt.committed = s.committed;
+      if (s.bytes) {
+        const envelope = { session_id: sessionId, attempt_id: att.attempt_id, base: att.start_ref ?? null, head: s.head, harness: shipAs, cwd };
+        let br;
+        try {
+          br = await post(`${origin}/local-ingest/bundle`, { ...authHeaders, 'x-pathsayer-bundle': b64urlJson(envelope), 'content-type': 'application/octet-stream' }, s.bytes, 'PUT');
+        } catch (e) { attempt.bundle_error = `transport: ${String(e?.message ?? e)}`; }
+        if (br) {
+          const body = await br.json().catch(() => ({}));
+          if (br.ok && body.ok) { attempt.bundled = true; attempt.bundle_key = body.key; saveAttempt({ origin, sessionId }, { last_upload_head: s.head, last_bundle_key: body.key }); }
+          else attempt.bundle_error = `http_${br.status}${body.error ? `: ${body.error}` : ''}`;
+        }
+      } else attempt.bundled = false;
+    } catch (e) { attempt.bundle_error = `save: ${String(e?.stderr ?? e?.message ?? e).trim()}`; }
+    if (attempt.bundle_error) say(`the attempt's bundle did not save (${attempt.bundle_error}); the work stays in the checkout and the stop ask reports it.`);
+  }
+
   // ── the transcripts: Claude Code's projects tree, or Codex's sessions tree ($CODEX_HOME — the
-  //    cloud runs the agent with CODEX_HOME=/opt/codex; a laptop's default is ~/.codex)
+  //    cloud runs the agent with CODEX_HOME=/opt/codex; a laptop's default is ~/.codex). An
+  //    ATTEMPT session ships ITS OWN transcript and its children only, found from the transcript
+  //    path the payload names (a laptop's tree may be a sibling `~/.claude-<name>`, and the tray's
+  //    own scan is not this hook's to repeat).
   const home = env.HOME || '/root';
-  const projectsDir = codexCloud
-    ? (env.PATHSAYER_CODEX_SESSIONS_DIR || join(env.CODEX_HOME || join(home, '.codex'), 'sessions'))
-    : (env.PATHSAYER_PROJECTS_DIR || join(home, '.claude', 'projects'));
-  const files = codexCloud ? findRollouts(projectsDir) : findTranscripts(projectsDir);
+  const payloadTranscript = typeof payload.transcript_path === 'string' && payload.transcript_path ? payload.transcript_path : null;
+  const projectsDir = attemptLive && payloadTranscript
+    ? treeRootOf(payloadTranscript, codex)
+    : codex
+      ? (env.PATHSAYER_CODEX_SESSIONS_DIR || join(env.CODEX_HOME || join(home, '.codex'), 'sessions'))
+      : (env.PATHSAYER_PROJECTS_DIR || join(home, '.claude', 'projects'));
+  const scanDir = attemptLive && payloadTranscript ? dirname(payloadTranscript) : projectsDir;
+  const files = codex ? findRollouts(scanDir) : findTranscripts(scanDir);
   const payloadCwd = typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd();
   // each session anchors on ITS OWN head cwd (the tray's rule); the payload's cwd is the fallback
   // for a head that names none. One git resolution per distinct cwd.
@@ -242,10 +292,11 @@ export async function ship(payload, env = process.env) {
     try { buf = maskExact(readFileSync(f), secrets); } catch { continue; }
     const eof = alignedEof(buf);
     if (eof === 0) continue; // no complete line yet — hold
-    const ident = codexCloud ? codexIdentityOf(projectsDir, f, buf) : identityOf(projectsDir, f);
+    const ident = codex ? codexIdentityOf(projectsDir, f, buf) : identityOf(projectsDir, f);
     if (ident === null) continue; // a rollout whose stem is off the shape — skipped, visibly (the tray's rule)
     const { id, slug } = ident;
     if (!id) continue;
+    if (attemptLive && id !== sessionId && !id.startsWith(`${sessionId}/`)) continue; // an attempt session ships itself and its children only
     const place = placeOf(headCwdOf(buf) ?? payloadCwd);
     // origin 0: the server owns a session's origin (a head rewritten before the first ship); the
     // courier adopts the server's answer when another device set it (an `origin` need or answer)
@@ -386,12 +437,49 @@ export async function ship(payload, env = process.env) {
   }
   const refused = refusedIds.size + unresolvedIds.size;
   if (refusedIds.size > 0) say(`${refusedIds.size} session${refusedIds.size === 1 ? '' : 's'} on a repo not enabled for this cloud device — enable it from the device's Sharing settings on Home to capture them.`);
-  return { outcome: 'ok', shipped, sessions: sessions.length, refused };
+  const result = { outcome: 'ok', shipped, sessions: sessions.length, refused, ...(attempt ? { attempt } : {}) };
+  // ── the attempt's PULL (2026-09-23), after the save and the delta: the stop ask. A task is the
+  //    block answer (the harness continues with it as its instruction); nothing is the ending ask
+  //    and the session finished — the server marks it so on that ask, and this hook never asks
+  //    again. A door that refused or could not be reached leaves the attempt live: the next stop asks.
+  if (attemptLive && payload.hook_event_name === 'Stop') {
+    const lastMessage = typeof payload.last_assistant_message === 'string' && payload.last_assistant_message !== ''
+      ? payload.last_assistant_message
+      : (payloadTranscript ? lastMessageFromTranscript(payloadTranscript) : null);
+    let transcriptBytes = null;
+    try { if (payloadTranscript) transcriptBytes = statSync(payloadTranscript).size; } catch { /* unknown */ }
+    const report = {};
+    const answer = await stopAsk({
+      origin, headers: authHeaders, attemptId: att.attempt_id, sessionId, lastMessage, transcriptBytes,
+      ...(attempt.bundle_error ? { bundleError: attempt.bundle_error } : {}),
+      budgetS: typeof att.wait_s === 'number' ? att.wait_s : 540,
+      // the rig's cap on the wait (never set in a member's environment): a run against a real server ends in seconds
+      ...(process.env.PATHSAYER_ATTEMPT_MAX_WAIT_S ? { maxWaitS: Number(process.env.PATHSAYER_ATTEMPT_MAX_WAIT_S) } : {}),
+      report,
+    });
+    if (answer?.task) {
+      // the handed task runs as a NEW attempt bound to this session (R9): the answer names it and the
+      // hook adopts it — every later ask and bundle is that attempt's (measured against dev's worker
+      // 2026-09-23: without this the second stop asked under the finished attempt and was answered
+      // unbound, and the session never finished)
+      saveAttempt({ origin, sessionId }, { ...(typeof answer.attempt_id === 'string' ? { attempt_id: answer.attempt_id } : {}), handed: answer.task.id ?? null, handed_at: new Date().toISOString() });
+      result.attempt.task = answer.task.id ?? null;
+      result.attempt.next_attempt_id = answer.attempt_id ?? null;
+      result.block = { decision: 'block', reason: renderTask(answer.task) };
+    } else if (report.ending === true) {
+      saveAttempt({ origin, sessionId }, { finished: true, finished_at: new Date().toISOString() });
+      result.attempt.finished = true;
+    }
+  }
+  return result;
 }
 
 async function main() {
   const payload = await readStdin().catch(() => ({}));
   const r = await ship(payload).catch((e) => ({ outcome: 'fatal', err: String(e) }));
+  // the block answer is the ONLY thing this script ever writes to stdout: the harness reads it and
+  // continues with the reason as the model's instruction (2026-09-23)
+  if (r?.block) process.stdout.write(JSON.stringify(r.block));
   if (process.env.PATHSAYER_SHIP_DEBUG === '1') process.stderr.write(JSON.stringify(r) + '\n');
 }
 

@@ -60,6 +60,9 @@ import { pluginSuffix, stampNoticed } from './lib/registered.mjs';
 // stderr line for a harness or root that cannot update itself
 import { decideUpdate, spawnUpdater } from './lib/self-update.mjs';
 import { originDir as hookOriginDir, stateDir as hookStateDir } from './lib/hookauth.mjs';
+// 2026-09-23 — a session in a constellation ATTEMPT: the start ref at SessionStart, the handshake
+// and the task card (and a predecessor's bundle) on the first prompt (lib/attempt.mjs)
+import { applyBundle, attemptHarnessOf, attemptLineOf, fetchBundle, handshake, loadAttempt, renderTask, saveAttempt, startRefOf } from './lib/attempt.mjs';
 
 /** The shallow-clone rule (2026-09-16) — the repo fields a fire sends for a cwd: the root when the
  *  checkout knows it; under a SHALLOW clone (the root would have been the depth boundary, and the
@@ -355,6 +358,59 @@ async function readStdin() {
   return raw ? JSON.parse(raw) : {};
 }
 
+/** SessionStart (2026-09-23): record the ref this checkout started from, once per session, so a
+ *  later attempt's bundle has its base — FETCH_HEAD in a cloud clone, the reflog's first entry in
+ *  a worktree. Every session pays one `rev-parse`; a session that never binds an attempt never
+ *  reads it again. Never throws. */
+function recordStart(payload, ctx) {
+  try {
+    const cwd = typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd();
+    if (loadAttempt(ctx)?.start_ref) return;
+    const ref = startRefOf(cwd);
+    if (ref) saveAttempt(ctx, { start_ref: ref, start_cwd: cwd });
+  } catch { /* fail-open */ }
+}
+
+/** The first-prompt hook's attempt half (2026-09-23): match `pathsayer-attempt: <id>` on the RAW
+ *  prompt's first line, keep it, and present it to the server until the server confirms. Bound →
+ *  the task card (and, for a successor, the predecessor's bundle applied first) is the context
+ *  this fire adds. Answered stop → one line that says so, and the id is never presented again.
+ *  Unreachable → nothing now; the next prompt presents it again. Null when this session names no
+ *  attempt, or is already bound — the ordinary fire. Never throws. */
+async function attemptPrompt(payload, ctx) {
+  try {
+    const lineId = attemptLineOf(payload.prompt);
+    let st = loadAttempt(ctx);
+    if (lineId && st?.attempt_id !== lineId) st = saveAttempt(ctx, { attempt_id: lineId, bound: false, refused: false });
+    if (!st?.attempt_id || st.bound === true || st.refused === true) return null;
+    const tok = await getBearer({ origin: ctx.origin, sessionId: ctx.sessionId });
+    if (!tok || (!tok.token && tok.source !== 'remote')) return null;
+    const headers = tok.token ? { authorization: `Bearer ${tok.token}` } : {};
+    const harness = attemptHarnessOf(process.env, payload);
+    const cwd = typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd();
+    const r = await handshake({ origin: ctx.origin, headers, attemptId: st.attempt_id, sessionId: ctx.sessionId, cwd, harness });
+    if (r.bound !== true) {
+      if (r.reason === 'stop') {
+        saveAttempt(ctx, { refused: true });
+        return `Pathsayer: this session is not the attempt it names (${st.attempt_id}). Stop — do no work on it.`;
+      }
+      return null; // unreachable or refused: presented again on the next prompt
+    }
+    saveAttempt(ctx, { bound: true, harness, cwd, ...(typeof r.wait_s === 'number' ? { wait_s: r.wait_s } : {}) });
+    const lines = [];
+    if (typeof r.bundle_key === 'string' && r.bundle_key) {
+      const bytes = await fetchBundle({ origin: ctx.origin, headers, key: r.bundle_key });
+      const a = bytes ? applyBundle({ cwd, bytes }) : { ok: false, reason: 'fetch' };
+      lines.push(a.ok
+        ? `Pathsayer: the predecessor's work (${a.commits} commit(s)) is applied in this checkout; continue from it.`
+        : `Pathsayer: the predecessor's bundle could not be applied here (${a.reason}); continue from the base.`);
+    }
+    const task = r.card?.task;
+    if (task && typeof task === 'object') lines.push(renderTask(task));
+    return lines.length > 0 ? lines.join('\n\n') : null;
+  } catch { return null; }
+}
+
 async function main() {
   // argv is IGNORED (2026-09-08): the payload decides. A running session may still hold a
   // pre-2026-09-08 hooks.json that passes `--lane x "label"`; the behavior must not depend on it.
@@ -372,18 +428,24 @@ async function main() {
     // the server-told release (2026-09-16): a session's start (startup · resume · clear · fork)
     // asks which build is current and, behind, hands the update to a detached child. Two seconds
     // inside SessionStart's five; nothing on stdout; every other lifecycle fire stays nothing.
-    if (ev === 'SessionStart') await askRelease(origin, { origin, sessionId, payload });
+    if (ev === 'SessionStart') {
+      recordStart(payload, { origin, sessionId }); // the attempt's base, should this session bind one
+      await askRelease(origin, { origin, sessionId, payload });
+    }
     return;
   }
   const commit = lane === 'commit';
+  // the attempt card (2026-09-23): the first prompt's handshake, before the recon fire — what it
+  // returns rides this fire's context whether or not the recon serve answers
+  const card = lane === 'prompt' ? await attemptPrompt(payload, { origin, sessionId }) : null;
   // the commit walk's failure shape is the DIRECTIVE, not silence (a commit is never silently
-  // unchecked); every other shape fails to silence
+  // unchecked); every other shape fails to silence — except a card, which is never dropped
   const fallback = () => {
-    if (!commit) return;
-    process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: DIRECTIVE } }));
+    if (commit) return process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: DIRECTIVE } }));
+    if (card) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: card } }));
   };
   const fire = commit ? buildCommitFire(payload) : buildFire(lane, payload);
-  if (!fire) return;
+  if (!fire) { if (card) fallback(); return; } // nothing to fire (a commit that did not land stays silent); a card still goes out
   if (fire.fallback === true) return fallback();
   const tok = await getBearer({ origin, sessionId });
   // not armed yet — the mint hook arms; the next fire serves. The cloud rung (source remote) has no
@@ -422,6 +484,11 @@ async function main() {
   // STRIPPED so the stdout envelope stays verbatim (the parity contract below).
   const sidecar = body.pathsayer ?? null;
   if (sidecar) delete body.pathsayer;
+  // the attempt card leads the served context (2026-09-23): the task before the recon
+  if (card) {
+    const served = body.hookSpecificOutput.additionalContext;
+    body.hookSpecificOutput.additionalContext = typeof served === 'string' && served.length > 0 ? `${card}\n\n${served}` : card;
+  }
   // the server-told release (2026-09-16): every served lane compares the sidecar's release with
   // the build that ran, at no extra request; behind → the detached updater. Never on stdout.
   if (sidecar && sidecar.plugin && typeof sidecar.plugin === 'object') await maybeUpdate(sidecar.plugin, { origin, sessionId, payload });

@@ -29,6 +29,15 @@ hook event, changes the MCP connection or rewrites the skill still loads at the
 next session start — the assistant tells you once to run `/reload-plugins`,
 naming what it picks up.
 
+From 1.0.20260923.4 the plugin runs a Pathsayer Constellation's work: a session
+started for a task the group posted saves its work at every stop, ships it, and
+asks Pathsayer for the next task before it ends — so the Stop hook's budget is
+590 seconds and the first prompt's is 60. Outside such a session both hooks
+return at once; an ordinary session feels nothing. A Claude Code Cloud
+environment that reuses a warm container runs the plugin that container booted
+with, and the plugin's self-update (above) is what brings a reused container
+forward.
+
 (Installed before 2026-09-08 from `https://pathsayer.com/plugin/marketplace.json`?
 That channel is retired: `/plugin marketplace remove pathsayer`, then the two
 lines above. Then verify from a shell, not the in-app UI:
@@ -77,7 +86,9 @@ Two steps Codex adds that Claude Code does not:
 1. **Trust the hooks once.** Codex runs a plugin's hooks only after you review
    them: `/hooks` in Codex lists the Pathsayer set — trust it. Codex records
    trust against each hook's definition, so a plugin update re-asks only when a
-   hook itself changes, not on every version.
+   hook itself changes, not on every version. (1.0.20260923.4 changes two hook
+   definitions — the Stop and first-prompt budgets, for Constellation work — so
+   that update asks once more.)
 2. **Approve the mint on first use.** The first prompt directs the model to call
    `mint_client_token` on the Pathsayer MCP server; Codex asks you to approve
    that call once. After it, the recon hooks are armed for the machine.
@@ -86,6 +97,34 @@ Then hooks and skills run as in Claude Code — recon on prompts and edits, the
 deep recon on a commit after every `git commit`. The session is captured locally by the Pathsayer
 tray. (The status line is Claude Code's; Codex has no plugin-drivable one, and
 the plugin installs nothing there.)
+
+### Codex Cloud (chatgpt.com/codex)
+
+Cloud tasks run in an environment you configure once, per repository. On Home, beside Devices,
+**Connect Cloud Device** → **Codex** shows the four settings with your token already in them:
+
+1. **Create environment.** Create a [new Codex Cloud
+   environment](https://chatgpt.com/codex/cloud/settings/environment/create), choose the GitHub
+   repository, and name it.
+2. **Secrets.** Click **Add +** and add a secret named `PATHSAYER_TOKEN` whose value is the token the
+   modal shows. Secrets reach the setup script only and are removed before the agent runs.
+3. **Setup script.** Switch it to **Manual** and paste the one line:
+   ```sh
+   curl -fsSL https://pathsayer.com/install/codex-cloud | sh
+   ```
+   The hosted script (readable at that URL) installs the plugin, trusts its hooks, writes the token to
+   the file the plugin reads, and approves the Pathsayer MCP tools for the environment. Leave Container
+   Caching on and the maintenance script empty: a cached container keeps what setup wrote, and a
+   rebuilt one runs setup again.
+4. **Agent internet access.** Set it to **On** and add `pathsayer.com` to the allowed domains.
+
+**Create** then adds the environment as a cloud device on Home, named **Codex Cloud**. Its sessions
+are their own harness — a repo shared from that card is the stream **Codex Cloud · owner/repo** — and
+every task there arrives signed in; the plugin updates itself through Codex's own verbs. A shared
+Team or Enterprise environment shows its settings to every member, so the token in its secret is as
+visible as the rest of the environment: personal environments are the instruction. To sign the
+environment out, revoke the token from its card; the same icon then creates a new one, and you replace
+the secret's value with it.
 
 ### The Pathsayer status line
 
