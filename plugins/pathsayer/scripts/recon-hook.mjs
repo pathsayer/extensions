@@ -507,7 +507,9 @@ async function main() {
       if (typeof text === 'string' && text.length > 0) statusLib?.writeServe(sessionId, text, { surface: fire.surface, op: commit ? 'walk' : 'serve' }, sidecar);
       // A REFUSED fire says why: the server's silent sidecar carries the reason (no_space — the
       // caller is in no space at all) and the bar reads "no space" rather than "silent".
-      else if (lane === 'prompt') statusLib?.writeSilent(sessionId, { surface: 'UserPromptSubmit', ...(typeof sidecar?.silent === 'string' ? { status: sidecar.silent } : {}) });
+      // 2026-10-01 (Gary): a prompt lane the server has turned OFF (`silent: 'lane_off'`) paints
+      // NOTHING — not a word, not a blank: the bar is not touched, so it keeps the last real serve.
+      else if (lane === 'prompt' && sidecar?.silent !== 'lane_off') statusLib?.writeSilent(sessionId, { surface: 'UserPromptSubmit', ...(typeof sidecar?.silent === 'string' ? { status: sidecar.silent } : {}) });
     } catch { /* presence is best-effort */ }
   }
   process.stdout.write(JSON.stringify(body)); // the envelope, verbatim — the parity contract
