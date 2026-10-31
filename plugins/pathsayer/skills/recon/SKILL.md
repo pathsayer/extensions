@@ -25,9 +25,12 @@ exact contract. With the Pathsayer plugin installed, recon also fires on its
 own as hooks — on each prompt and around Bash — and injects up to **two
 attributions** into context: each carries its `[intent]` synthesis, date,
 author, its `atr_…` id, the turn address, its owning path, a `[since]` line —
-and, when the matched work has been materially revised, a `[now]` block: the
+when the matched work has been materially revised, a `[now]` block: the
 work's CURRENT form (its causal head), with the head's own date, author,
-`atr_…` id, address, owning path, and intent synthesis. On prompts it also
+`atr_…` id, address, owning path, and intent synthesis — and, when the lines
+you hold were copied from somewhere else, an `[origin]` line: the file and
+commit they first entered the repo in, and the turn that wrote them there,
+with its own intent. On prompts it also
 lists up to three **additional paths** the question bears on. The calls below
 are how you go deeper than what a hook served. Recon runs at two efforts.
 **Quick** is one serve: the two attributions above, with their since and now —
@@ -124,6 +127,8 @@ attributions:
 - [intent] 2026-08-11 · Gary · atr_895cfcf1b3e78896 · turn <session>/<turn> · path_… — <title>
   <the synthesis: what was written, and the decision stated at that moment>
   [since] 99% alive (137/138 lines)
+  [origin] 2026-07-03 · Gary · atr_3717a4d47f88bca0 · turn <session>/<turn> · path_… — <title> · copied from <file>:18-37 · 100% identical · exact
+    <the origin's synthesis — why the lines were WRITTEN, beside why they were pasted here>
   [now] 2026-08-17 · Gary · atr_d478f4ca6585c0cd · turn <session>/<turn> · path_… — <title>
     <the head's synthesis>
 
@@ -139,6 +144,8 @@ bash view, `code_spans`), a big turn's card may be a **step's**: the address lin
 says `step 5 of 12` and the `[intent]` is what that step set out to do to these
 lines, not the whole turn's paragraph — the turn's other steps stay servable;
 `recon_get` the id to read them all.
+
+**`[origin]`** — only on a fire that holds lines, and only when those lines are a **copy**: they first entered the repo in another file, and the record found that earlier write. The line names the origin's turn (date, author, `atr_…`, address, owning path), `copied from <file>:<start>-<end>` (the origin file at the commit the lines first landed in), how identical the copy is and whether the match is `exact` or `edited`, then a state word when the origin's file has since lost the lines (`since deleted`, `drafted off-repo`, `not yet committed`); its body is the origin's own intent. The origin is the EARLIEST writer git can see, even when its file no longer holds the lines — that is where the reason the code was written lives, so for "why is this shaped this way" cite the `[origin]` turn and for "why is it here" cite the card. When no recorded turn wrote the origin it reads `[origin] copied from … · commit <sha> · no recorded reasoning` — say that, never invent one. Copies are line copies only: a rewrite in the same line of work (same path, same files, a mention by name) earns no `[origin]`; its lineage is the owning path and the additional paths.
 
 **`additional paths:`** — the arcs the ask bears on that no served attribution
 already belongs to, best first (paths several signals agree on come before
@@ -210,7 +217,7 @@ lives TODAY.
 ## Recon Walk — `recon_walk`, then `recon_walk_query`
 
 Recon Walk builds the graph of who replaced whose lines around what you hold,
-stores it under an id (`rcn_…`), and returns the header and the three `checks`
+stores it under an id (`rcn_…`), and returns the header and the `checks`
 lists. `recon_walk_query` reads the stored graph by that id. Walk, read the
 checks, then ask the stored graph your questions — the recipe is below.
 
@@ -241,6 +248,8 @@ lines — where it stands now), `mid` (both happened). The server builds this gr
 around what you hold and stores it under an id; you read it with a handful of
 questions instead of scanning it.
 
+One more kind of node wears `origin`: the turn a seed's lines were **copied from** — a `checks.copied` entry (below) names it, and it joins the graph in the copier's component with a mass of 0.01, dressed with its date, author and intent. A copy is not a replacement, so it is not an edge: `node` on such an origin shows no `fed by` and no `flowed into`, components do not join across it, and `now`, `origins` and `arc` do not travel it. That is by design — read it from `checks.copied`, not from the edges.
+
 ### 1. Walk
 
 ```
@@ -257,7 +266,7 @@ call({ op: "recon_walk", args: {
 
 What to seed with. `code_spans` — pass the exact lines you would quote (a comparator,
 a guard, a check), not boilerplate; lines the record cannot match come back named in
-`misses`. `code: "*"` — everyone whose living code is in the file right now. When more
+`misses`. The copied check is scoped to the lines you seed: quote the lines you suspect were pasted in and `checks.copied` says where they came from; a whole-file `"*"` seed gets every copy its holders carry. `code: "*"` — everyone whose living code is in the file right now. When more
 than 25 people hold a file, the 25 holding the most lines are the seeds, the rest are
 listed in `budget.frontier`, and the header says so (`seeded 25 of 103 holders of
 <file> (61% of its living lines)`). This is not the same as recon's `"*"`: recon's
@@ -280,23 +289,23 @@ What comes back:
 ```
 walked 0s ago · rcn_… · 28 nodes · 68 edges · 2 components · 2 overlaps · mass 81% kept · 16 seeds. <legend>
 
-{ "seeds": [...], "checks": { "replaced": [...], "overlaps": [...], "absences": [...] },
+{ "seeds": [...], "checks": { "replaced": [...], "overlaps": [...], "absences": [...], "copied"?: [...] },
   "misses": [...], "budget": { "massKept", "truncated", "frontier" }, "newGround"?, "unmatchable"? }
 
-<!-- pathsayer-recon/6 rcn=rcn_… walk=n:28,rp:15,ov:2,ab:0 -->
+<!-- pathsayer-recon/6 rcn=rcn_… walk=n:28,rp:15,ov:2,ab:0[,cp:3] -->
 ```
 
 - **The header** — how big the walk was and its id (`rcn_…`). The nodes and
   edges are stored under that id, with every attribution's full intent, `mass`,
   `role`, `since` and `holds`; ask for them with `recon_walk_query`.
 - **`seeds`** — what the walk started from, as `atr_…` ids.
-- **`checks`** — the three lists: `replaced` (attributions whose living code the
+- **`checks`** — the lists: `replaced` (attributions whose living code the
   ask touches, highest `mass` first), `overlaps` (pairs of attributions whose
   living code sits on the same lines, nobody having settled which stands — each
   pair carries `candidates`: up to 3 later writes that took lines from both
   sides), `absences` (diff and commit walks: files that historically change with
   the ones you touched and did not this time — `{file, absent, together, of,
-  lastTogether}`, at most 3).
+  lastTogether}`, at most 3), and `copied` (present only when some asked lines are a copy: one entry per run of lines that first entered the repo in another file — `id` the seed holding them, `lines` the copied lines among the ones you asked about, `from` the origin file and range at the commit they first landed in, `origin` the turn that wrote them there as an `atr_…` or `null` when no recorded turn did, `commit`, `identical` (%), `match` `exact` | `edited`, `state` `alive` | `deleted` | `off_repo` | `uncommitted` | `unrecorded` | `pre_record`, and `holders`, how many files held the run). A copy is a check and a node, never an edge: the origin turn is in the graph as a low-mass `origin` node, and nothing else connects to it.
 - **`misses`** — everything you asked for that resolved to nothing, named: an id,
   a file `(no holders)`, a positional span as `file:start+lines`, a code span as
   its file and first distinctive line.
@@ -320,7 +329,7 @@ Read `overlaps` and `replaced` before asking anything else — they show you the
 disagreements you didn't know to look for. `replaced` is who holds the lines you
 are touching; `overlaps` is where two writes disagree and nobody settled it;
 `absences` is the file that usually changes with yours and did not this time.
-The three checks ARE the recipe below — this is what a deep recon runs.
+`copied` is where the lines you hold came from: when the question is *why*, read it before `replaced`, because the first writer's turn is where the intent was stated — even when that writer's file has since lost the lines. The checks ARE the recipe below — this is what a deep recon runs.
 
 ### 3. Ask the stored graph
 
@@ -328,7 +337,7 @@ The three checks ARE the recipe below — this is what a deep recon runs.
 call({ op: "recon_walk_query", args: { rcn: "rcn_…", verb: "now", id: "<seed id>", session_id: "…" }})
 ```
 
-`verb` is one of: `checks` — the three lists again (the default). `top` — which
+`verb` is one of: `checks` — the lists again (the default). `top` — which
 attributions matter most (by mass; `n`, default 10). `grep` — which attributions talk
 about X (`pattern`, a regex; a lower-case pattern matches either case; `placement
 tick` also finds `placementTick`; narrow with `file`, a substring or glob over the
@@ -339,7 +348,7 @@ ones it did not serve): its intent, mass, role, holds, since, and who it replace
 who replaced it; its what/why, commits and owning path are `recon_get`'s, not the
 walk's. `now` — where this attribution's lines stand today: the heads that took them,
 with a count of the writes on the way. `origins` — where this decision started: the
-roots, the same way. `arc` — how `a` became `b`, step by step (the way itself). `candidates` — did
+roots, the same way — along replacement edges only; a copy's source is in `checks.copied`, not here. `arc` — how `a` became `b`, step by step (the way itself). `candidates` — did
 anyone settle `a` and `b` (any pair). An id is the `atr_…` you were served; a unique
 prefix of it works too. If most of the nodes are seeds, `top` tells you little — start
 with `grep`.
@@ -347,7 +356,7 @@ Only you can read your own walks.
 
 ### Deep recon — the recipe
 
-"Deep recon" is the short name for this: walk what you hold, run the three
+"Deep recon" is the short name for this: walk what you hold, run the
 checks the walk hands you, and check your plan — or the commit you just made —
 against what they found. Before a change the ask is the lines you are about to
 touch; after a commit the ask is the diff, and the plugin runs the walk for you.
@@ -414,6 +423,7 @@ Same recipe, same checks, one list:
 5. **Origins, when the question is why.** `origins` walks back to the first
    decision. Cite the origin for "why is this shaped this way"; cite a head for
    "what is true now".
+   `origins` follows replacement edges. A copy is a different ancestry: for each `checks.copied` entry whose `origin` is an `atr_…`, `node` it in the walk or `recon_get` it, and cite it as the source of the intent — it is the earliest writer git can see, by rule, even when its own file no longer holds the lines. An entry whose `origin` is `null` reads `commit … · no recorded reasoning` on the hook door: say that. No `copied` entry at all means the lines were not moved from anywhere the record can see — a rewrite in the same line of work is not a copy, and its lineage is the owning path, not an edge.
 6. **Write down what you carry.** One line per attribution you will build on or
    reverse — its id, the walk it came from, how much of it still stands, what it
    decided: `atr_… (in walk rcn_…) · 94% alive · "…"`. Those lines go verbatim
@@ -439,8 +449,8 @@ Same recipe, same checks, one list:
 
 ### Two more moves
 
-The checks above are the standing check, the contradiction check and the absence
-check. Two moves the recipe reaches for less often, each ending in a receipt:
+The checks above are the standing check, the contradiction check, the absence
+check and the copied check. Two moves the recipe reaches for less often, each ending in a receipt:
 
 - **Edge walk** *(a path)* — how one write became another: `verb: "arc"`; each
   step's intent carries the step's reason. Finds the term the fixes skipped,
@@ -476,10 +486,12 @@ An empty result means **no recorded reason exists** — say exactly that; never
 invent a rationale. If `derive_lag` shows pending sessions or turns, say
 "unrecorded or not yet processed."
 
+A walk with no `copied` entry and no `[origin]` on a card is not a missing edge. Two turns on the same path, writing the same notes files, one naming the other — that is a **rewrite** in one line of work, and the record serves it as the owning path and the additional paths, never as a copy. The copied check records lines that moved from one file to another; it says nothing about work that was redone from scratch.
+
 For better recon results on future work: write and edit files with the Edit/Write tools
 rather than shell scripts (`python3 - <<EOF`, `sed -i`). Tool edits increase transcript
 provenance for writes.
 
 ---
 
-*recon skill v1.0.20261028.1*
+*recon skill v1.0.20261030.1*

@@ -44,7 +44,7 @@ export function walkCounts(text) {
   if (!m) return null;
   const kv = Object.fromEntries(m[1].split(',').map((p) => p.split(':')));
   const num = (k) => Number(kv[k] ?? 0);
-  const [n, rp, ov, dc, ab, ng, x] = [num('n'), num('rp'), num('ov'), num('dc'), num('ab'), num('ng'), num('x')];
+  const [n, rp, ov, dc, ab, cp, ng, x] = [num('n'), num('rp'), num('ov'), num('dc'), num('ab'), num('cp'), num('ng'), num('x')];
   if (n === 0) {
     const parts = [];
     if (ng > 0) parts.push(`${ng}% new ground`);
@@ -56,6 +56,7 @@ export function walkCounts(text) {
   if (ov > 0) found.push(`${ov} overlap${ov === 1 ? '' : 's'}`);
   if (dc > 0) found.push(`${dc} decision${dc === 1 ? '' : 's'}`); // historical markers only — dc never mints again (120 S1f)
   if (ab > 0) found.push(`${ab} absence${ab === 1 ? '' : 's'}`);
+  if (cp > 0) found.push(`${cp} cop${cp === 1 ? 'y' : 'ies'}`); // 2026-10-30: the copied check — where the asked lines came from
   if (found.length > 0) segs.push(`found ${found.join(', ')}`);
   if (ng > 0) segs.push(`${ng}% new ground`);
   if (x > 0) segs.push(`${x} unmatchable`);
