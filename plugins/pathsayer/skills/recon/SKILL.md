@@ -248,7 +248,7 @@ lines — where it stands now), `mid` (both happened). The server builds this gr
 around what you hold and stores it under an id; you read it with a handful of
 questions instead of scanning it.
 
-One more kind of node wears `origin`: the turn a seed's lines were **copied from** — a `checks.copied` entry (below) names it, and it joins the graph in the copier's component with a mass of 0.01, dressed with its date, author and intent. A copy is not a replacement, so it is not an edge: `node` on such an origin shows no `fed by` and no `flowed into`, components do not join across it, and `now`, `origins` and `arc` do not travel it. That is by design — read it from `checks.copied`, not from the edges.
+A **copy** is its own kind of edge: `kind: "copied"`, from the turn whose lines were copied to the turn that copied them, with `lines`, `identical` and `match` in place of `replaced`. It joins components and carries relevance (a copied line weighs a quarter of a replaced one, and an origin keeps at most five copies), so seeding either end brings in the other. It is not a replacement — the origin's lines still stand — so it never makes a role (the origin of a copy is still a head), `now` and `candidates` never follow it, and `node` lists it apart, under `copied from` / `copied into`. `origins` and `arc` do travel it: `origins` names the ends it reached through a copy, and `arc` labels each step `copied` or `replaced`. An edge joins two turns, and a turn often writes several files, so a copy edge also says **which files and which lines**: `files`, one pair per copier file ← origin file with its matched lines, and up to three ranges each — the copier's lines at HEAD (or `no longer in the file`) ← the origin's at the commit they first appeared in (`@sha`). `node` and `arc` print them. Read the pair before you say where a copy is; never infer the file from the turn. Which of the lines you asked about are a copy is still `checks.copied` (below). An origin the walk's budget cut is still added as a node with role `origin` and a mass of 0.01, so its intent is one `node` away.
 
 ### 1. Walk
 
@@ -305,7 +305,7 @@ walked 0s ago · rcn_… · 28 nodes · 68 edges · 2 components · 2 overlaps �
   pair carries `candidates`: up to 3 later writes that took lines from both
   sides), `absences` (diff and commit walks: files that historically change with
   the ones you touched and did not this time — `{file, absent, together, of,
-  lastTogether}`, at most 3), and `copied` (present only when some asked lines are a copy: one entry per run of lines that first entered the repo in another file — `id` the seed holding them, `lines` the copied lines among the ones you asked about, `from` the origin file and range at the commit they first landed in, `origin` the turn that wrote them there as an `atr_…` or `null` when no recorded turn did, `commit`, `identical` (%), `match` `exact` | `edited`, `state` `alive` | `deleted` | `off_repo` | `uncommitted` | `unrecorded` | `pre_record`, and `holders`, how many files held the run). A copy is a check and a node, never an edge: the origin turn is in the graph as a low-mass `origin` node, and nothing else connects to it.
+  lastTogether}`, at most 3), and `copied` (present only when some asked lines are a copy: one entry per run of lines that first entered the repo in another file — `id` the seed holding them, `lines` the copied lines among the ones you asked about, `from` the origin file and range at the commit they first landed in, `origin` the turn that wrote them there as an `atr_…` or `null` when no recorded turn did, `commit`, `identical` (%), `match` `exact` | `edited`, `state` `alive` | `deleted` | `off_repo` | `uncommitted` | `unrecorded`, and `holders`, how many files held the run). The check is line-scoped; the link between the two turns is the `copied` edge in the graph, which is there whichever of the copier's lines you asked about.
 - **`misses`** — everything you asked for that resolved to nothing, named: an id,
   a file `(no holders)`, a positional span as `file:start+lines`, a code span as
   its file and first distinctive line.
@@ -423,7 +423,7 @@ Same recipe, same checks, one list:
 5. **Origins, when the question is why.** `origins` walks back to the first
    decision. Cite the origin for "why is this shaped this way"; cite a head for
    "what is true now".
-   `origins` follows replacement edges. A copy is a different ancestry: for each `checks.copied` entry whose `origin` is an `atr_…`, `node` it in the walk or `recon_get` it, and cite it as the source of the intent — it is the earliest writer git can see, by rule, even when its own file no longer holds the lines. An entry whose `origin` is `null` reads `commit … · no recorded reasoning` on the hook door: say that. No `copied` entry at all means the lines were not moved from anywhere the record can see — a rewrite in the same line of work is not a copy, and its lineage is the owning path, not an edge.
+   `origins` follows replacement edges and copy edges, and names the ends it reached through a copy. For the lines you asked about: for each `checks.copied` entry whose `origin` is an `atr_…`, `node` it in the walk or `recon_get` it, and cite it as the source of the intent — it is the earliest writer git can see, by rule, even when its own file no longer holds the lines. An entry whose `origin` is `null` reads `commit … · no recorded reasoning` on the hook door: say that. No `copied` entry at all means the lines were not moved from anywhere the record can see — a rewrite in the same line of work is not a copy, and its lineage is the owning path, not an edge.
 6. **Write down what you carry.** One line per attribution you will build on or
    reverse — its id, the walk it came from, how much of it still stands, what it
    decided: `atr_… (in walk rcn_…) · 94% alive · "…"`. Those lines go verbatim
@@ -440,7 +440,9 @@ Same recipe, same checks, one list:
    > prior commits (last `<lastTogether>`), and no reason not to this time.
 
    Where the record holds nothing, say "no recorded reason" — never invent one.
-   Hunks under `newGround` have no recorded reason; say that. Before a change or
+   Hunks under `newGround` have no recorded reason; say that. `checks.copied` may
+   appear on a commit walk too; it is where lines came from, not a conflict, so
+   read it and do not act on it. Before a change or
    after a commit, if nothing conflicts, say **"Deep recon checks are clean."**
    On a question there is no change to check: close with what the record holds
    on the ask, in the walk's own terms — what stands, what was replaced and by
@@ -494,4 +496,4 @@ provenance for writes.
 
 ---
 
-*recon skill v1.0.20261030.1*
+*recon skill v1.0.20261101.2*
